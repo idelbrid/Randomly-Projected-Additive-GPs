@@ -1,0 +1,8 @@
+*.ipynb
+*.mat
+*.swp
+*.idea/*
+*.ipynb_checkpoints/*
+data/*
+__pycache__/*
+
