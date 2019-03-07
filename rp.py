@@ -30,6 +30,10 @@ def Sigmoid(a: torch.Tensor, b, x):
     return torch.sigmoid(x.matmul(a) + b)
 
 
+def LinearProjection(a: torch.Tensor, b, x):
+    return x.matmul(a)
+
+
 def Tanh(a: torch.Tensor, b, x):
     return torch.tanh(x.matmul(a) + b)
 
@@ -64,11 +68,13 @@ def Fourier(a, b, x):
 
 
 def ELM(X, K, dist='gaussian', activation='sigmoid'):
-    [n, d] = X.size
+    [n, d] = X.size()
     A = gen_rp(d, K, dist)
     b = gen_rp(1, K, dist)
     fn = None
-    if callable(activation):
+    if activation is None:
+        fn = LinearProjection
+    elif callable(activation):
         fn = activation
     elif activation=='sigmoid':
         fn = Sigmoid
