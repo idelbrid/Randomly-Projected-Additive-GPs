@@ -4,6 +4,7 @@ from gpytorch.models import ExactGP
 from gpytorch.lazy.zero_lazy_tensor import ZeroLazyTensor
 from typing import Optional, Type
 import numpy as np
+import logging
 
 #
 class RPKernel(gpytorch.kernels.Kernel):
@@ -25,7 +26,7 @@ class RPKernel(gpytorch.kernels.Kernel):
         self.bs = bs
         self.activation = activation
         self.base_kernels = base_kernels
-        self.d= d
+        self.d = d
         self.J = J
         self.k = k
 
@@ -68,7 +69,7 @@ class ExactGPModel(ExactGP):
 def fit_gp_model(gp_model, gp_likelihood, xs, ys,
                  optimizer: Optional[Type]=None, lr=0.1,
                  gp_mll=None, n_epochs=100, verbose=False, patience=20,
-                 conv_tol=1e-4, check_conv=True):
+                 conv_tol=1e-4, check_conv=True, smooth=True):
     if gp_mll is None:
         gp_mll = gpytorch.mlls.ExactMarginalLogLikelihood(gp_likelihood, gp_model)
     if optimizer is None:
@@ -81,6 +82,7 @@ def fit_gp_model(gp_model, gp_likelihood, xs, ys,
     optimizer_ = optimizer(gp_model.parameters(), lr=lr)
 
     losses = np.zeros((n_epochs,))
+    ma = np.zeros((n_epochs,))
     for i in range(n_epochs):
 
         # Define and pass in closure to work with LBFGS, but also works with
@@ -91,16 +93,24 @@ def fit_gp_model(gp_model, gp_likelihood, xs, ys,
             loss = -gp_mll(output, ys)
             if verbose:
                 print(
-                    'Iter %d/%d - Loss: %.3f' % (i + 1, n_epochs, loss.item()))
+                        'Iter %d/%d - Loss: %.3f, Noise: %.4f' % (i + 1, n_epochs, loss.item(), gp_likelihood.noise.item()))
             loss.backward()
             return loss
         loss = optimizer_.step(closure).item()
         losses[i] = loss
+        ma[i] = losses[i-patience+1:i+1].mean()
         if check_conv and i >= patience:
-            if losses[i-patience] - losses[i] < conv_tol:
+            if smooth and ma[i-patience] - ma[i] < conv_tol:
                 if verbose:
-                    print("Reached convergence, {} - {} < {}".format(losses[i-patience], loss, conv_tol))
+                    print("Reached convergence at {}, MA {} - {} < {}".format(loss, ma[i-patience], ma[i], conv_tol))
                 return
+            if not smooth and losses[i-patience] - losses[i] < conv_tol:
+                if verbose:
+                    print("Reached convergence at {}, {} - {} < {}".format(loss, losses[i-patience], loss, conv_tol))
+                return
+    gp_model.eval()
+    gp_likelihood.eval()
+
 
 
 class LinearRegressionModel(torch.nn.Module):
@@ -150,9 +160,6 @@ def fit_linear_model(model, xs, ys, criterion,
 
     model.train()
 
-
-
-
     losses = np.zeros((n_epochs,))
     for i in range(n_epochs):
 
@@ -174,3 +181,4 @@ def fit_linear_model(model, xs, ys, criterion,
                 if verbose:
                     print("Reached convergence, {} - {} < {}".format(losses[i-patience], loss, conv_tol))
                 return
+    model.eval()

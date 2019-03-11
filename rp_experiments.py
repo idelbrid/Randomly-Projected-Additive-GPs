@@ -10,6 +10,7 @@ import rp
 import traceback
 import os
 from scipy.io import loadmat
+import json
 
 
 # TODO: should I preprocess the data further by normalizing inputs/outputs?
@@ -27,6 +28,9 @@ def load_dataset(name: str):
     df.columns = [str(c) for c in df.columns]
     df = df.reset_index()
 
+    df['target'] = df['target'] - df['target'].mean()
+    df['target'] = df['target']/(df['target'].std())
+
     # TODO: Figure out why this happens sometimes.
     df = df.dropna(axis=1, how='all')
 
@@ -42,14 +46,7 @@ def old_get_small_datasets():
 
 
 def get_datasets():
-    return ['challenger', 'fertility', 'concreteslump', 'autos', 'servo',
-     'breastcancer', 'machine', 'yacht', 'autompg', 'housing', 'forest',
-     'stock', 'pendulum', 'energy', 'concrete', 'solar', 'airfoil',
-     'wine', 'gas', 'skillcraft', 'sml', 'parkinsons', 'pumadyn32nm',
-     'pol', 'elevators', 'bike', 'kin40k', 'protein', 'tamielectric',
-     'keggdirected', 'slice', 'keggundirected', '3droad', 'song',
-     'buzz', 'houseelectric']
-
+    return get_small_datasets() + get_medium_datasets() + get_big_datasets()
 
 def get_small_datasets():
     return ['challenger', 'fertility', 'concreteslump', 'autos', 'servo',
@@ -175,7 +172,7 @@ def run_experiment(training_routine: Callable,
                     results_list.append(result_dict)
                     print('{} - {}'.format(datetime.datetime.now(), result_dict))
                     succeed = True
-                    print("succeed: ", succeed)
+                    # print("succeed: ", succeed)
             except Exception:
                 result_dict = dict(error=traceback.format_exc(),
                               fold=fold,
@@ -228,11 +225,17 @@ def run_experiment_suite(datasets,
     return df
 
 
-def train_SE_gp(trainX, trainY, testX, testY, ard=True, optimizer='lbfgs',
-                n_epochs=100, lr=0.1, verbose=False, patience=20):
+def train_SE_gp(trainX, trainY, testX, testY, ard=False, optimizer='lbfgs',
+                n_epochs=100, lr=0.1, verbose=False, patience=20, smooth=True,
+                noise_prior=False):
     [n, d] = trainX.shape
     # regular Gaussian likelihood for regression problem
-    likelihood = gpytorch.likelihoods.GaussianLikelihood()
+    if noise_prior:
+        noise_prior_ = gpytorch.priors.SmoothedBoxPrior(1e-4, 10, sigma=0.01)
+    else:
+        noise_prior_ = None
+
+    likelihood = gpytorch.likelihoods.GaussianLikelihood(noise_prior=noise_prior_)
 
     # no lengthscale prior etc.
     if ard:
@@ -241,7 +244,7 @@ def train_SE_gp(trainX, trainY, testX, testY, ard=True, optimizer='lbfgs',
         ard_num_dims = None
 
     kernel = gpytorch.kernels.RBFKernel(ard_num_dims=ard_num_dims)
-    # kernel = gpytorch.kernels.ScaleKernel(kernel)
+    kernel = gpytorch.kernels.ScaleKernel(kernel)
 
     if optimizer == 'lbfgs':
         optimizer_ = torch.optim.LBFGS
@@ -261,90 +264,99 @@ def train_SE_gp(trainX, trainY, testX, testY, ard=True, optimizer='lbfgs',
     # fit GP
     fit_gp_model(model, likelihood, trainX, trainY, optimizer=optimizer_,
                  lr=lr, n_epochs=n_epochs, verbose=verbose, gp_mll=mll,
-                 patience=patience)
-    model.eval()
-    likelihood.eval()
-    mll.eval()
+                 patience=patience, smooth=smooth)
 
     model_metrics = dict()
     with torch.no_grad():
+        model.train()  # consider prior for evaluation on train dataset
+        likelihood.train()
+        train_outputs = model(trainX)
+        model_metrics['prior_train_nmll'] = -mll(train_outputs, trainY).item()
+        
+
+        model.eval()  # Now consider posterior distributions
+        likelihood.eval()
         train_outputs = model(trainX)
         test_outputs = model(testX)
-
-        model_metrics['train_nmll'] = -mll(train_outputs, trainY).item()
-        model_metrics['test_nmll'] = -mll(test_outputs, testY).item()
         model_metrics['train_nll'] = -likelihood(train_outputs).log_prob(trainY).item()
         model_metrics['test_nll'] = -likelihood(test_outputs).log_prob(testY).item()
+        model_metrics['train_mse'] = mean_squared_error(train_outputs.mean, trainY)
 
     return model_metrics, test_outputs.mean
 
-
-def train_rp_gp(trainX, trainY, testX, testY, k, ard=True, activation=None,
-                dist='gaussian', optimizer='lbfgs', n_epochs=100, lr=0.1,
-                verbose=False, patience=20):
-    [n, d] = trainX.shape
-
-    X = torch.cat([trainX, testX], dim=0)
-    Xprime, W, b = rp.ELM(X, k, dist, activation)
-
-    trainXprime = Xprime[:n, :]
-    testXprime = Xprime[n:, :]
-    # regular Gaussian likelihood for regression problem
-    likelihood = gpytorch.likelihoods.GaussianLikelihood()
-
-    # no lengthscale prior etc.
-    if ard:
-        ard_num_dims = k
-    else:
-        ard_num_dims = None
-    kernel = gpytorch.kernels.RBFKernel(ard_num_dims=ard_num_dims)
-    # kernel = gpytorch.kernels.ScaleKernel(kernel)
-
-    if optimizer == 'lbfgs':
-        optimizer_ = torch.optim.LBFGS
-    elif optimizer == 'adam':
-        optimizer_ = torch.optim.Adam
-    elif optimizer == 'sgd':
-        optimizer_ = torch.optim.SGD
-    else:
-        raise ValueError("Unknown optimizer {}".format(optimizer))
-
-    model = ExactGPModel(trainXprime, trainY, likelihood, kernel)
-
-    # regular marginal log likelihood
-    mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
-
-    # fit GP
-    fit_gp_model(model, likelihood, trainXprime, trainY, optimizer=optimizer_,
-                 lr=lr, n_epochs=n_epochs, verbose=verbose, gp_mll=mll,
-                 patience=patience)
-    model.eval()
-    likelihood.eval()
-    mll.eval()
-
-    model_metrics = dict()
-    with torch.no_grad():
-        train_outputs = model(trainXprime)
-        test_outputs = model(testXprime)
-
-        model_metrics['train_nmll'] = -mll(train_outputs, trainY).item()
-        model_metrics['test_nmll'] = -mll(test_outputs, testY).item()
-        model_metrics['train_nll'] = -likelihood(train_outputs).log_prob(trainY).item()
-        model_metrics['test_nll'] = -likelihood(test_outputs).log_prob(testY).item()
-
-    return model_metrics, test_outputs.mean
+#
+# def train_rp_gp(trainX, trainY, testX, testY, k, ard=False, activation=None,
+#                 dist='gaussian', optimizer='lbfgs', n_epochs=100, lr=0.1,
+#                 verbose=False, patience=20, smooth=True):
+#     [n, d] = trainX.shape
+#
+#     X = torch.cat([trainX, testX], dim=0)
+#     Xprime, W, b = rp.ELM(X, k, dist, activation)
+#
+#     trainXprime = Xprime[:n, :]
+#     testXprime = Xprime[n:, :]
+#     # regular Gaussian likelihood for regression problem
+#     likelihood = gpytorch.likelihoods.GaussianLikelihood()
+#
+#     # no lengthscale prior etc.
+#     if ard:
+#         ard_num_dims = k
+#     else:
+#         ard_num_dims = None
+#     kernel = gpytorch.kernels.RBFKernel(ard_num_dims=ard_num_dims)
+#     kernel = gpytorch.kernels.ScaleKernel(kernel)
+#
+#     if optimizer == 'lbfgs':
+#         optimizer_ = torch.optim.LBFGS
+#     elif optimizer == 'adam':
+#         optimizer_ = torch.optim.Adam
+#     elif optimizer == 'sgd':
+#         optimizer_ = torch.optim.SGD
+#     else:
+#         raise ValueError("Unknown optimizer {}".format(optimizer))
+#
+#     model = ExactGPModel(trainXprime, trainY, likelihood, kernel)
+#
+#     # regular marginal log likelihood
+#     mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
+#
+#     # fit GP
+#     fit_gp_model(model, likelihood, trainXprime, trainY, optimizer=optimizer_,
+#                  lr=lr, n_epochs=n_epochs, verbose=verbose, gp_mll=mll,
+#                  patience=patience, smooth=smooth)
+#     model.eval()
+#     likelihood.eval()
+#     mll.eval()
+#
+#     model_metrics = dict()
+#     with torch.no_grad():
+#         train_outputs = model(trainXprime)
+#         test_outputs = model(testXprime)
+#
+#         model_metrics['train_nmll'] = -mll(train_outputs, trainY).item()
+#         model_metrics['test_nmll'] = -mll(test_outputs, testY).item()
+#         model_metrics['train_nll'] = -likelihood(train_outputs).log_prob(trainY).item()
+#         model_metrics['test_nll'] = -likelihood(test_outputs).log_prob(testY).item()
+#
+#     return model_metrics, test_outputs.mean
 
 
 def train_additive_rp_gp(trainX, trainY, testX, testY, k, J, ard=True,
                          activation=None, optimizer='lbfgs',
-                         n_epochs=100, lr=0.1, verbose=False, patience=20):
+                         n_epochs=100, lr=0.1, verbose=False, patience=20,
+                         smooth=True, noise_prior=False):
     [n, d] = trainX.shape
 
     # X = torch.cat([trainX, testX], dim=0)
     # Xprime, W, b = rp.ELM(X, k, dist, activation)
 
     # regular Gaussian likelihood for regression problem
-    likelihood = gpytorch.likelihoods.GaussianLikelihood()
+    if noise_prior:
+        noise_prior_ = gpytorch.priors.SmoothedBoxPrior(1e-4, 10, sigma=0.01)
+    else:
+        noise_prior_ = None
+
+    likelihood = gpytorch.likelihoods.GaussianLikelihood(noise_prior=noise_prior_)
 
     if J < 1:
         raise ValueError("J<1")
@@ -361,7 +373,7 @@ def train_additive_rp_gp(trainX, trainY, testX, testY, k, J, ard=True,
         kernels.append(gpytorch.kernels.RBFKernel(ard_num_dims))
 
     kernel = RPKernel(J, k, d, kernels, projs, bs, activation=activation)
-    # kernel = gpytorch.kernels.ScaleKernel(kernel)
+    kernel = gpytorch.kernels.ScaleKernel(kernel)
 
     if optimizer == 'lbfgs':
         optimizer_ = torch.optim.LBFGS
@@ -380,20 +392,27 @@ def train_additive_rp_gp(trainX, trainY, testX, testY, k, J, ard=True,
     # fit GP
     fit_gp_model(model, likelihood, trainX, trainY, optimizer=optimizer_,
                  lr=lr, n_epochs=n_epochs, verbose=verbose, gp_mll=mll,
-                 patience=patience)
+                 patience=patience, smooth=smooth)
     model.eval()
     likelihood.eval()
     mll.eval()
 
     model_metrics = dict()
     with torch.no_grad():
+        model.train()  # consider prior for evaluation on train dataset
+        likelihood.train()
+        train_outputs = model(trainX)
+        model_metrics['prior_train_nmll'] = -mll(train_outputs, trainY).item()
+        
+
+        model.eval()  # Now consider posterior distributions
+        likelihood.eval()
         train_outputs = model(trainX)
         test_outputs = model(testX)
-
-        model_metrics['train_nmll'] = -mll(train_outputs, trainY).item()
-        model_metrics['test_nmll'] = -mll(test_outputs, testY).item()
         model_metrics['train_nll'] = -likelihood(train_outputs).log_prob(trainY).item()
         model_metrics['test_nll'] = -likelihood(test_outputs).log_prob(testY).item()
+        model_metrics['train_mse'] = mean_squared_error(train_outputs.mean, trainY)
+
 
     return model_metrics, test_outputs.mean
 
@@ -427,7 +446,6 @@ def train_lr(trainX, trainY, testX, testY, optimizer='lbfgs',
     return model_metrics, ypred
 
 
-
 def rp_ablation(split, cv, outer_repeats=1, inner_repeats=1):
     df = pd.DataFrame()
     for i in range(outer_repeats):
@@ -455,51 +473,65 @@ def rp_ablation(split, cv, outer_repeats=1, inner_repeats=1):
     return df
 
 
-def rp_compare_ablation(fit=False):
+def rp_compare_ablation(filename, fit=True, ard=False,
+                        dsets=get_small_datasets()+get_medium_datasets(),
+                        optimizer='lbfgs', lr=0.1, patience=10, verbose=False,
+                        include_se=True, repeats=1, noise_prior=False):
     df = pd.DataFrame()
+
     if fit:
         epochs = 1000
         fname = './fitted_scaled_rp_compare_ablation_results.csv'
     else:
         epochs = 0
         fname = './unfitted_scaled_rp_compare_ablation_results.csv'
+    if filename is not None:
+        fname = filename
 
 
-    for dataset in get_small_datasets()+get_medium_datasets():
+    for dataset in dsets:
         print(dataset, 'starting')
 
-        # regular SE kernel
-        try:
-            result = run_experiment(train_SE_gp,
-                                    dict(verbose=False, lr=0.1, optimizer='lbfgs',
-                                         n_epochs=epochs, patience=10),
-                                    dataset=dataset, split=0.1, cv=True,
-                                    repeats=1)
-            result['RP'] = False
-            result['dataset'] = dataset
-        except Exception:
-            result = dict()
-            result['RP'] = False
-            result['dataset'] = dataset
-            result['error'] = traceback.format_exc()
-            print(result)
-            result = pd.DataFrame([result])
-        df = pd.concat([df, result])
-        df.to_csv(fname)
+        if include_se:
+            # regular SE kernel
+            options = dict(verbose=verbose, lr=lr, optimizer=optimizer,
+                           n_epochs=epochs, patience=patience, smooth=True,
+                           ard=ard, noise_prior=noise_prior)
+            options_json = json.dumps(options)
+            try:
+
+                result = run_experiment(train_SE_gp, options, dataset=dataset,
+                                        split=0.1, cv=True, repeats=repeats)
+                result['RP'] = False
+                result['dataset'] = dataset
+                result['options'] = options_json
+            except Exception:
+                result = dict()
+                result['RP'] = False
+                result['dataset'] = dataset
+                result['error'] = traceback.format_exc()
+                result['options'] = options_json
+                print(result)
+                result = pd.DataFrame([result])
+            df = pd.concat([df, result])
+            df.to_csv(fname)
 
         for k in [1, 4, 10]:
             for J in [1, 2, 3, 5, 8, 13, 20]:
+                options = dict(verbose=False, ard=ard, activation=None,
+                                optimizer=optimizer, n_epochs=epochs,
+                                lr=lr, patience=patience, k=k, J=J,
+                                smooth=True, noise_prior=noise_prior)
+                options_json = json.dumps(options)
                 try:
-                    result = run_experiment(train_additive_rp_gp,
-                                            dict(verbose=False, ard=False, activation=None,
-                                                 optimizer='lbfgs', n_epochs=epochs,
-                                                 lr=0.1, patience=10, k=k, J=J),
+                    result = run_experiment(train_additive_rp_gp, options,
                                             dataset=dataset, split=0.1, cv=True,
-                                            repeats=1)
+                                            repeats=repeats)
                     result['RP'] = True
                     result['k'] = k
                     result['J'] = J
                     result['dataset'] = dataset
+                    result['options'] = options_json
                 except Exception:
                     result = dict()
                     result['RP'] = True
@@ -507,79 +539,20 @@ def rp_compare_ablation(fit=False):
                     result['J'] = J
                     result['dataset'] = dataset
                     result['error'] = traceback.format_exc()
+                    result['options'] = options_json
                     print(result)
                     result = pd.DataFrame([result])
                 df = pd.concat([df, result])
                 df.to_csv(fname)
 
 
-def rp_compare_ablation_dset(dataset, fit=False):
-    df = pd.DataFrame()
-    if fit:
-        epochs = 1000
-        fname = './{}_fitted_scaled_rp_compare_ablation_results.csv'.format(dataset)
-    else:
-        epochs = 0
-        fname = './{}_unfitted_scaled_rp_compare_ablation_results.csv'.format(dataset)
-
-
-    print(dataset, 'starting')
-    # regular SE kernel
-    try:
-        result = run_experiment(train_SE_gp,
-                                dict(verbose=True, lr=0.1, optimizer='lbfgs',
-                                     n_epochs=epochs, patience=10),
-                                dataset=dataset, split=0.1, cv=True,
-                                repeats=1)
-        result['RP'] = False
-        result['dataset'] = dataset
-    except Exception:
-        result = dict()
-        result['RP'] = False
-        result['dataset'] = dataset
-        result['error'] = traceback.format_exc()
-        print(result)
-        result = pd.DataFrame([result])
-    df = pd.concat([df, result])
-    df.to_csv(fname)
-
-    for k in [1, 4, 10]:
-        for J in [1, 2, 3, 5, 8, 13, 20]:
-            try:
-                result = run_experiment(train_additive_rp_gp,
-                                        dict(verbose=False, ard=False, activation=None,
-                                             optimizer='lbfgs', n_epochs=epochs,
-                                             lr=0.1, patience=10, k=k, J=J),
-                                        dataset=dataset, split=0.1, cv=True,
-                                        repeats=1)
-                result['RP'] = True
-                result['k'] = k
-                result['J'] = J
-                result['dataset'] = dataset
-            except Exception:
-                result = dict()
-                result['RP'] = True
-                result['k'] = k
-                result['J'] = J
-                result['dataset'] = dataset
-                result['error'] = traceback.format_exc()
-                print(result)
-                result = pd.DataFrame([result])
-            df = pd.concat([df, result])
-            df.to_csv(fname)
-
-
 if __name__ == '__main__':
-    # print(load_dataset('wine'))
-    #
-    # run_experiment(train_SE_gp,
-    #                dict(verbose=False, ard=False, optimizer='lbfgs',
-    #                     n_epochs=1000, lr=.1, patience=10),
-    #                 'concrete', .1, cv=True, repeats=1)
 
-    # rp_compare_ablation(False)
+    dsets = ['autos', 'fertility', 'energy', 'yacht']
+    with gpytorch.settings.fast_computations(covar_root_decomposition=False,
+                                             log_prob=False):
+        rp_compare_ablation(fit=True,
+                            filename='./tmp.csv',
+                            dsets=dsets)
 
-    # rp_compare_ablation(True)
-
-    rp_compare_ablation_dset('breastcancer', True)
 
