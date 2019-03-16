@@ -1,19 +1,17 @@
 import pandas as pd
 import numpy as np
 import torch
-import gpytorch
 from typing import Callable, Dict, Union
-from gp_helpers import ExactGPModel, fit_gp_model, RPKernel, LinearRegressionModel, ELMModule, fit_linear_model
 import time
 import datetime
-import rp
 import traceback
 import os
 from scipy.io import loadmat
 import json
 
+from gp_helpers import mean_squared_error
+from training_routines import train_SE_gp, train_additive_rp_gp
 
-# TODO: should I preprocess the data further by normalizing inputs/outputs?
 
 def old_load_dataset(name: str):
     """Helper method to load a given dataset by name"""
@@ -37,16 +35,9 @@ def load_dataset(name: str):
     return df
 
 
-def old_get_datasets():
-    return ['bach', 'concrete', 'housing', 'pumadyn-8nh', 'servo']
-
-
-def old_get_small_datasets():
-    return ['bach', 'concrete', 'housing', 'servo']
-
-
 def get_datasets():
     return get_small_datasets() + get_medium_datasets() + get_big_datasets()
+
 
 def get_small_datasets():
     return ['challenger', 'fertility', 'concreteslump', 'autos', 'servo',
@@ -65,19 +56,12 @@ def get_big_datasets():
      'buzz', 'houseelectric']
 
 
-def shuffle(dataset: pd.DataFrame, seed=123456):
-    """Helper method to shuffle a dataset dataframe"""
-    indices = np.arange(len(dataset))
-    s = np.random.get_state()
-    np.random.seed(seed)
-    np.random.shuffle(indices)
-    np.random.set_state(s)
-    return dataset.iloc[indices]
-
-
-def mean_squared_error(y_pred: torch.Tensor, y_true: torch.Tensor):
-    pass
-    return ((y_pred - y_true)**2).mean().item()
+def format_timedelta(delta):
+    d = delta.days
+    h = delta.seconds // (60*60)
+    m = (delta.seconds - h*(60*60)) // 60
+    s = (delta.seconds - h*(60*60) - m*60)
+    return '{}d {}h {}m {}s'.format(d, h, m, s)
 
 
 def run_experiment(training_routine: Callable,
@@ -115,11 +99,6 @@ def run_experiment(training_routine: Callable,
     :return: results_list
     """
 
-    # TODO: should this output a dataframe instead of a list? Dataframe might be nicer
-
-    # if isinstance(dataset, str):
-    #     dataset = old_load_dataset(dataset)
-    #     dataset = shuffle(dataset)
     if isinstance(dataset, str):
         dataset = load_dataset(dataset)
 
@@ -130,7 +109,7 @@ def run_experiment(training_routine: Callable,
     n_folds = int(round(1/split))
 
     results_list = []
-
+    t0 = time.clock()
     for fold in range(n_folds):
         if not cv and fold > 0:  # only do one fold if you're not doing CV
             break
@@ -154,9 +133,11 @@ def run_experiment(training_routine: Callable,
                                    'd': len(features)-2}
 
                     start = time.perf_counter()
-                    model_metrics, ypred = training_routine(trainX, trainY, testX,
+                    ret = training_routine(trainX, trainY, testX,
                                                             testY,
                                                             **training_options)
+                    model_metrics = ret[0]
+                    ypred = ret[1]
                     end = time.perf_counter()
 
                     result_dict['mse'] = mean_squared_error(ypred, testY)
@@ -170,8 +151,14 @@ def run_experiment(training_routine: Callable,
                     for name, fxn in addl_metrics.items():
                         result_dict[name] = fxn(ypred, testY)
                     results_list.append(result_dict)
-                    print('{} - {}'.format(datetime.datetime.now(), result_dict))
                     succeed = True
+                    t = time.clock()
+                    elapsed = t - t0
+                    num_finished = fold*repeats+repeat+1
+                    num_remaining = n_folds*repeats - num_finished
+                    eta = datetime.timedelta(seconds=elapsed/num_finished*num_remaining)
+                    print('{}, fold={}, rep={}, eta={} \n{}'.format(datetime.datetime.now(), fold, repeat, format_timedelta(eta), result_dict))
+
                     # print("succeed: ", succeed)
             except Exception:
                 result_dict = dict(error=traceback.format_exc(),
@@ -222,254 +209,6 @@ def run_experiment_suite(datasets,
             df = pd.concat([df, result])
             df.to_csv('./_partial_result.csv')
 
-    return df
-
-
-def train_SE_gp(trainX, trainY, testX, testY, ard=False, optimizer='lbfgs',
-                n_epochs=100, lr=0.1, verbose=False, patience=20, smooth=True,
-                noise_prior=False):
-    [n, d] = trainX.shape
-    # regular Gaussian likelihood for regression problem
-    if noise_prior:
-        noise_prior_ = gpytorch.priors.SmoothedBoxPrior(1e-4, 10, sigma=0.01)
-    else:
-        noise_prior_ = None
-
-    likelihood = gpytorch.likelihoods.GaussianLikelihood(noise_prior=noise_prior_)
-
-    # no lengthscale prior etc.
-    if ard:
-        ard_num_dims = d
-    else:
-        ard_num_dims = None
-
-    kernel = gpytorch.kernels.RBFKernel(ard_num_dims=ard_num_dims)
-    kernel = gpytorch.kernels.ScaleKernel(kernel)
-
-    if optimizer == 'lbfgs':
-        optimizer_ = torch.optim.LBFGS
-    elif optimizer == 'adam':
-        optimizer_ = torch.optim.Adam
-    elif optimizer == 'sgd':
-        optimizer_ = torch.optim.SGD
-    else:
-        raise ValueError("Unknown optimizer {}".format(optimizer))
-
-    model = ExactGPModel(trainX, trainY, likelihood, kernel)
-
-
-    # regular marginal log likelihood
-    mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
-
-    # fit GP
-    fit_gp_model(model, likelihood, trainX, trainY, optimizer=optimizer_,
-                 lr=lr, n_epochs=n_epochs, verbose=verbose, gp_mll=mll,
-                 patience=patience, smooth=smooth)
-
-    model_metrics = dict()
-    with torch.no_grad():
-        model.train()  # consider prior for evaluation on train dataset
-        likelihood.train()
-        train_outputs = model(trainX)
-        model_metrics['prior_train_nmll'] = -mll(train_outputs, trainY).item()
-        
-
-        model.eval()  # Now consider posterior distributions
-        likelihood.eval()
-        train_outputs = model(trainX)
-        test_outputs = model(testX)
-        model_metrics['train_nll'] = -likelihood(train_outputs).log_prob(trainY).item()
-        model_metrics['test_nll'] = -likelihood(test_outputs).log_prob(testY).item()
-        model_metrics['train_mse'] = mean_squared_error(train_outputs.mean, trainY)
-
-    return model_metrics, test_outputs.mean
-
-#
-# def train_rp_gp(trainX, trainY, testX, testY, k, ard=False, activation=None,
-#                 dist='gaussian', optimizer='lbfgs', n_epochs=100, lr=0.1,
-#                 verbose=False, patience=20, smooth=True):
-#     [n, d] = trainX.shape
-#
-#     X = torch.cat([trainX, testX], dim=0)
-#     Xprime, W, b = rp.ELM(X, k, dist, activation)
-#
-#     trainXprime = Xprime[:n, :]
-#     testXprime = Xprime[n:, :]
-#     # regular Gaussian likelihood for regression problem
-#     likelihood = gpytorch.likelihoods.GaussianLikelihood()
-#
-#     # no lengthscale prior etc.
-#     if ard:
-#         ard_num_dims = k
-#     else:
-#         ard_num_dims = None
-#     kernel = gpytorch.kernels.RBFKernel(ard_num_dims=ard_num_dims)
-#     kernel = gpytorch.kernels.ScaleKernel(kernel)
-#
-#     if optimizer == 'lbfgs':
-#         optimizer_ = torch.optim.LBFGS
-#     elif optimizer == 'adam':
-#         optimizer_ = torch.optim.Adam
-#     elif optimizer == 'sgd':
-#         optimizer_ = torch.optim.SGD
-#     else:
-#         raise ValueError("Unknown optimizer {}".format(optimizer))
-#
-#     model = ExactGPModel(trainXprime, trainY, likelihood, kernel)
-#
-#     # regular marginal log likelihood
-#     mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
-#
-#     # fit GP
-#     fit_gp_model(model, likelihood, trainXprime, trainY, optimizer=optimizer_,
-#                  lr=lr, n_epochs=n_epochs, verbose=verbose, gp_mll=mll,
-#                  patience=patience, smooth=smooth)
-#     model.eval()
-#     likelihood.eval()
-#     mll.eval()
-#
-#     model_metrics = dict()
-#     with torch.no_grad():
-#         train_outputs = model(trainXprime)
-#         test_outputs = model(testXprime)
-#
-#         model_metrics['train_nmll'] = -mll(train_outputs, trainY).item()
-#         model_metrics['test_nmll'] = -mll(test_outputs, testY).item()
-#         model_metrics['train_nll'] = -likelihood(train_outputs).log_prob(trainY).item()
-#         model_metrics['test_nll'] = -likelihood(test_outputs).log_prob(testY).item()
-#
-#     return model_metrics, test_outputs.mean
-
-
-def train_additive_rp_gp(trainX, trainY, testX, testY, k, J, ard=True,
-                         activation=None, optimizer='lbfgs',
-                         n_epochs=100, lr=0.1, verbose=False, patience=20,
-                         smooth=True, noise_prior=False):
-    [n, d] = trainX.shape
-
-    # X = torch.cat([trainX, testX], dim=0)
-    # Xprime, W, b = rp.ELM(X, k, dist, activation)
-
-    # regular Gaussian likelihood for regression problem
-    if noise_prior:
-        noise_prior_ = gpytorch.priors.SmoothedBoxPrior(1e-4, 10, sigma=0.01)
-    else:
-        noise_prior_ = None
-
-    likelihood = gpytorch.likelihoods.GaussianLikelihood(noise_prior=noise_prior_)
-
-    if J < 1:
-        raise ValueError("J<1")
-    if ard:
-        ard_num_dims = k
-    else:
-        ard_num_dims = None
-
-    kernels = []
-    projs = []
-    bs = [torch.zeros(k)]*J
-    for j in range(J):
-        projs.append(rp.gen_rp(d, k))  # d, k just output dimensions of matrix
-        kernels.append(gpytorch.kernels.RBFKernel(ard_num_dims))
-
-    kernel = RPKernel(J, k, d, kernels, projs, bs, activation=activation)
-    kernel = gpytorch.kernels.ScaleKernel(kernel)
-
-    if optimizer == 'lbfgs':
-        optimizer_ = torch.optim.LBFGS
-    elif optimizer == 'adam':
-        optimizer_ = torch.optim.Adam
-    elif optimizer == 'sgd':
-        optimizer_ = torch.optim.SGD
-    else:
-        raise ValueError("Unknown optimizer {}".format(optimizer))
-
-    model = ExactGPModel(trainX, trainY, likelihood, kernel)
-
-    # regular marginal log likelihood
-    mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
-
-    # fit GP
-    fit_gp_model(model, likelihood, trainX, trainY, optimizer=optimizer_,
-                 lr=lr, n_epochs=n_epochs, verbose=verbose, gp_mll=mll,
-                 patience=patience, smooth=smooth)
-    model.eval()
-    likelihood.eval()
-    mll.eval()
-
-    model_metrics = dict()
-    with torch.no_grad():
-        model.train()  # consider prior for evaluation on train dataset
-        likelihood.train()
-        train_outputs = model(trainX)
-        model_metrics['prior_train_nmll'] = -mll(train_outputs, trainY).item()
-        
-
-        model.eval()  # Now consider posterior distributions
-        likelihood.eval()
-        train_outputs = model(trainX)
-        test_outputs = model(testX)
-        model_metrics['train_nll'] = -likelihood(train_outputs).log_prob(trainY).item()
-        model_metrics['test_nll'] = -likelihood(test_outputs).log_prob(testY).item()
-        model_metrics['train_mse'] = mean_squared_error(train_outputs.mean, trainY)
-
-
-    return model_metrics, test_outputs.mean
-
-
-# def train_ELM(trainX, trainY, testX, testY, k, activation=None, optimizer='lbfgs',
-#               n_epochs=1000, lr=0.1, verbose=False, patience=10):
-#
-
-def train_lr(trainX, trainY, testX, testY, optimizer='lbfgs',
-              n_epochs=1000, lr=0.1, verbose=False, patience=10):
-    model = LinearRegressionModel(trainX, trainY)
-
-    loss = torch.nn.MSELoss()
-
-    if optimizer == 'lbfgs':
-        optimizer_ = torch.optim.LBFGS
-    elif optimizer == 'adam':
-        optimizer_ = torch.optim.Adam
-    elif optimizer == 'sgd':
-        optimizer_ = torch.optim.SGD
-    else:
-        raise ValueError("Unknown optimizer {}".format(optimizer))
-    fit_linear_model(model, trainX, trainY, loss, optimizer_, lr, n_epochs, verbose, patience)
-
-    model.eval()
-
-    model_metrics = dict()
-
-    ypred = model(testX)
-
-    return model_metrics, ypred
-
-
-def rp_ablation(split, cv, outer_repeats=1, inner_repeats=1):
-    df = pd.DataFrame()
-    for i in range(outer_repeats):
-        for dataset in old_get_small_datasets():
-            print(dataset, 'starting...')
-            for x in range(13):
-                k = 2**x
-                try:
-                    result = run_experiment(train_rp_gp,
-                                            dict(verbose=False, lr=1.5,
-                                                 optimizer='adam', n_epochs=2000,
-                                                 k=k, activation=None, patience=20),
-                                            dataset, split, cv, repeats=inner_repeats)
-                    result['n_projections'] = k
-                    result['dataset'] = dataset
-
-                except Exception:
-                    tb = traceback.format_exc()
-                    result = pd.DataFrame([{'n_projections': k,
-                                            'dataset': dataset,
-                                            'error': tb}])
-
-                df = pd.concat([df, result])
-                df.to_csv('./_partial_ablation_results.csv')
     return df
 
 
@@ -547,12 +286,13 @@ def rp_compare_ablation(filename, fit=True, ard=False,
 
 
 if __name__ == '__main__':
+    def run():
+        run_experiment(train_additive_rp_gp, dict(verbose=False, ard=False, activation=None,
+                                                  optimizer='adam', n_epochs=100, lr=0.1, patience=20, k=1, J=1,
+                                                  smooth=True, noise_prior=True, ski=True, grid_ratio=1.0),
+                       'pumadyn32nm', 0.1, cv=False) 
 
-    dsets = ['autos', 'fertility', 'energy', 'yacht']
-    with gpytorch.settings.fast_computations(covar_root_decomposition=False,
-                                             log_prob=False):
-        rp_compare_ablation(fit=True,
-                            filename='./tmp.csv',
-                            dsets=dsets)
+    import cProfile
 
+    cProfile.run('run()', 'restats')
 

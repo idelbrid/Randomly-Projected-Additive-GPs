@@ -17,7 +17,11 @@ def np_gen_rp(k, d, dist='gaussian'):
 
 def gen_rp(k, d, dist='gaussian'):
     if dist == 'gaussian':
-        return torch.randn(k, d)/np.sqrt(k)
+        return torch.randn(k, d)/np.sqrt(d)
+    elif dist == 'sphere':
+        W = torch.randn(k, d)
+        vecnorms = torch.norm(W, p=2, dim=0, keepdim=True)
+        return torch.div(W, vecnorms)
     elif dist == 'bernoulli':
         return torch.bernoulli(torch.rand(k, d))
     elif dist == 'uniform':
