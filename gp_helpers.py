@@ -25,12 +25,16 @@ class RPKernel(gpytorch.kernels.Kernel):
         if not Ws[0].shape[1] == k:
             raise Exception("Weight matrix 0 number of columns does not match d")
 
-        self.Ws = Ws
-        self.bs = bs
         self.learn_weights = learn_weights
         if self.learn_weights:
-            self.register_parameter('Ws', self.Ws)
-            self.register_parameter('bs', self.bs)
+            for i in range(len(Ws)):
+                self.register_parameter('W_{}'.format(i), torch.nn.Parameter(Ws[i]))
+                self.register_parameter('b_{}'.format(i), torch.nn.Parameter(bs[i]))
+        else:
+            for i in range(len(Ws)):
+                self.__setattr__('W_{}'.format(i), Ws[i])
+                self.__setattr__('b_{}'.format(i), bs[i])
+
         self.activation = activation
         self.base_kernels = base_kernels
         self.d = d
@@ -38,6 +42,27 @@ class RPKernel(gpytorch.kernels.Kernel):
         self.k = k
         self.last_x1 = None
         self.cached_projections = None
+
+
+    @property
+    def Ws(self):
+        toreturn = []
+        i = 0
+        while hasattr(self, 'W_{}'.format(i)):
+            toreturn.append(self.__getattr__('W_{}'.format(i)))
+            i += 1
+        return toreturn
+
+
+    @property
+    def bs(self):
+        toreturn = []
+        i = 0
+        while hasattr(self, 'b_{}'.format(i)):
+            toreturn.append(self.__getattr__('b_{}'.format(i)))
+            i += 1
+        return toreturn
+
 
     def _project(self, x):
         projections = []

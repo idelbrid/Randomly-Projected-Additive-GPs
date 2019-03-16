@@ -109,7 +109,7 @@ def run_experiment(training_routine: Callable,
     n_folds = int(round(1/split))
 
     results_list = []
-    t0 = time.clock()
+    t0 = time.time()
     for fold in range(n_folds):
         if not cv and fold > 0:  # only do one fold if you're not doing CV
             break
@@ -152,7 +152,7 @@ def run_experiment(training_routine: Callable,
                         result_dict[name] = fxn(ypred, testY)
                     results_list.append(result_dict)
                     succeed = True
-                    t = time.clock()
+                    t = time.time()
                     elapsed = t - t0
                     num_finished = fold*repeats+repeat+1
                     num_remaining = n_folds*repeats - num_finished
@@ -283,6 +283,9 @@ def rp_compare_ablation(filename, fit=True, ard=False,
                     result = pd.DataFrame([result])
                 df = pd.concat([df, result])
                 df.to_csv(fname)
+
+
+
 
 
 if __name__ == '__main__':
