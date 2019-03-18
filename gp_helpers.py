@@ -184,7 +184,6 @@ def train_to_convergence(model, xs, ys,
         ma[i] = losses[i-patience+1:i+1].mean()
         if verbose > 0:
             print("epoch {}, loss {}".format(i, total_loss))
-        total_loss = total_loss + loss
         if check_conv and i >= patience:
             if smooth and ma[i-patience] - ma[i] < conv_tol:
                 if verbose > 0:

@@ -244,10 +244,10 @@ def train_exact_gp(trainX, trainY, testX, testY, rp, k=None, J=None, ard=False,
         likelihood.eval()
         train_outputs = model(trainX)
         test_outputs = model(testX)
-        model_metrics['train_nll'] = -likelihood(train_outputs).log_prob(
-            trainY).item()
-        model_metrics['test_nll'] = -likelihood(test_outputs).log_prob(
-            testY).item()
+        # model_metrics['train_nll'] = -likelihood(train_outputs).log_prob(
+        #     trainY).item()
+        # model_metrics['test_nll'] = -likelihood(test_outputs).log_prob(
+        #     testY).item()
         model_metrics['train_mse'] = mean_squared_error(train_outputs.mean,
                                                         trainY)
 
