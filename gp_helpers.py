@@ -14,6 +14,18 @@ class RPKernel(gpytorch.kernels.Kernel):
     # TODO: Add unit tests to test this better.
     def __init__(self, J, k, d, base_kernels, Ws, bs, activation=None,
                  active_dims=None, learn_weights=False):
+        """
+
+        :param J: Number of independent subkernels
+        :param k: Dimension to project into
+        :param d: Dimension to project from
+        :param base_kernels: Kernel function for each subkernel
+        :param Ws: List of projection (weight) matrices
+        :param bs: List of offset (bias) vectors (could be 0s)
+        :param activation: If not None, apply a nonlinear fxn after projection
+        :param active_dims: not used ATM
+        :param learn_weights: if true, consider Ws and bs tunable parameters. Otherwise, keep them static.
+        """
         super(RPKernel, self).__init__(active_dims=active_dims)
         if not len(base_kernels) == J:
             raise Exception("Number of kernels does not match J")
