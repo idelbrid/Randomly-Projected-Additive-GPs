@@ -16,6 +16,7 @@ def np_gen_rp(k, d, dist='gaussian'):
 
 
 def gen_rp(k, d, dist='gaussian'):
+    """Generate a random projection matrix (input dim k output dim d)"""
     if dist == 'gaussian':
         return torch.randn(k, d)/np.sqrt(d)
     elif dist == 'sphere':

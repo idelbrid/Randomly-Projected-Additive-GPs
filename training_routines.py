@@ -13,6 +13,7 @@ import torch
 
 
 def _map_to_optim(optimizer):
+    """Helper to map optimizer string names to torch objects"""
     if optimizer == 'adam':
         optimizer_ = torch.optim.Adam
     elif optimizer == 'sgd':
@@ -25,6 +26,7 @@ def _map_to_optim(optimizer):
 
 
 def _save_state_dict(model):
+    """Helper to save the state dict of a torch model to a unique filename"""
     d = model.state_dict()
     s = str(d)
     h = hash(s)
@@ -35,6 +37,17 @@ def _save_state_dict(model):
 
 def create_rp_kernel(d, k, J, ard=False, activation=None, ski=False,
                      grid_size=None, learn_weights=False, ):
+    """Construct a RP kernel object (though not random if learn_weights is true)
+    d is dimensionality of data
+    k is the dimensionality of the projections
+    J is the number of independent RP kernels in a RPKernel object
+    ard set to True if each RBF kernel should use ARD
+    activation None if no nonlinearity applied after projection. Otherwise, the name of the nonlinearity
+    ski set to True computes each sub-kernel by scalable kernel interpolation
+    grid_size ignored if ski is False. Otherwise, the size of the grid in each dimension
+        * Note that if we project into k dimensions, we have grid_size^d grid points
+    learn_weights set to True to learn projection matrix elements
+    """
     if J < 1:
         raise ValueError("J<1")
     if ard:
@@ -54,10 +67,12 @@ def create_rp_kernel(d, k, J, ard=False, activation=None, ski=False,
                                                               num_dims=k)
         kernels.append(kernel)
 
+    # RP kernel takes a lot of arguments
     return RPKernel(J, k, d, kernels, projs, bs, activation=activation, learn_weights=learn_weights)
 
 
 def create_additive_kernel(d, ski=False, grid_size=None):
+    """Inefficient implementation of a kernel where each dimension has its own RBF subkernel."""
     k = 1
     J = d
     kernels = []
@@ -78,6 +93,7 @@ def create_additive_kernel(d, ski=False, grid_size=None):
 
 
 def create_rbf_kernel(d, ard=False, ski=False, grid_size=None):
+    """Helper to create an RBF kernel object with these options."""
     if ard:
         ard_num_dims = d
     else:
@@ -92,6 +108,17 @@ def create_rbf_kernel(d, ard=False, ski=False, grid_size=None):
 def create_svi_gp(trainX, rp, k, J, ard, activation, noise_prior, ski,
                   grid_ratio, grid_size, learn_weights=False,
                   additive=False):
+    """Create a SVGP model with a specified kernel.
+    rp: if True, use a random projection kernel
+    k: dimension of the projections (ignored if rp is False)
+    J: number of RP subkernels (ignored if rp is False)
+    ard: whether to use ARD in RBF kernels
+    activation: passed to create_rp_kernel
+    noise_prior: if True, use a box prior over Gaussian observation noise to help with optimization
+    ski: if True, use SVI with SKI as in Stochastic Variational Deep Kernel Learning (not implemented yet)
+    learn_weights: passed to create_rp_kernel
+    additive: if True, (and not RP) use an additive kernel instead of RP or RBF
+    """
     if ski:
         raise NotImplementedError("SVI with KISS-GP not implemented")
     [n, d] = trainX.shape
@@ -128,6 +155,7 @@ def train_svi_gp(trainX, trainY, testX, testY, rp, k=None, J=None, ard=False,
                    verbose=False, patience=10, smooth=True, noise_prior=False,
                    ski=False, grid_ratio=1, grid_size=None, batch_size=64,
                  learn_weights=False, additive=False):
+    """Create and train a SVGP with the given parameters."""
 
     model, likelihood = create_svi_gp(trainX, rp, k, J, ard, activation,
                                       noise_prior, ski, grid_ratio, grid_size, 
@@ -179,6 +207,19 @@ def train_svi_gp(trainX, trainY, testX, testY, rp, k=None, J=None, ard=False,
 
 def create_exact_gp(trainX, trainY, rp, k, J, ard, activation, noise_prior, ski,
                     grid_ratio, grid_size, learn_weights=False, additive=False):
+    """Create an exact GP model with a specified kernel.
+        rp: if True, use a random projection kernel
+        k: dimension of the projections (ignored if rp is False)
+        J: number of RP subkernels (ignored if rp is False)
+        ard: whether to use ARD in RBF kernels
+        activation: passed to create_rp_kernel
+        noise_prior: if True, use a box prior over Gaussian observation noise to help with optimization
+        ski: if True, use SKI
+        grid_ratio: used if grid size is not provided to determine number of inducing points.
+        grid_size: the number of grid points in each dimension.
+        learn_weights: passed to create_rp_kernel
+        additive: if True, (and not RP) use an additive kernel instead of RP or RBF
+        """
     [n, d] = trainX.shape
 
     # regular Gaussian likelihood for regression problem
@@ -213,6 +254,7 @@ def train_exact_gp(trainX, trainY, testX, testY, rp, k=None, J=None, ard=False,
                    verbose=False, patience=20, smooth=True, noise_prior=False,
                    ski=False, grid_ratio=1, grid_size=None, learn_weights=False,
                    additive=False):
+    """Create and train an exact GP with the given options"""
     model, likelihood = create_exact_gp(trainX, trainY, rp, k, J, ard,
                                         activation, noise_prior, ski,
                                         grid_ratio, grid_size, 
@@ -244,10 +286,10 @@ def train_exact_gp(trainX, trainY, testX, testY, rp, k=None, J=None, ard=False,
         likelihood.eval()
         train_outputs = model(trainX)
         test_outputs = model(testX)
-        # model_metrics['train_nll'] = -likelihood(train_outputs).log_prob(
-        #     trainY).item()
-        # model_metrics['test_nll'] = -likelihood(test_outputs).log_prob(
-        #     testY).item()
+        model_metrics['train_nll'] = -likelihood(train_outputs).log_prob(
+            trainY).item()
+        model_metrics['test_nll'] = -likelihood(test_outputs).log_prob(
+            testY).item()
         model_metrics['train_mse'] = mean_squared_error(train_outputs.mean,
                                                         trainY)
 
@@ -256,14 +298,17 @@ def train_exact_gp(trainX, trainY, testX, testY, rp, k=None, J=None, ard=False,
 
 
 def train_SE_gp(trainX, trainY, testX, testY, **kwargs):
+    """Alias for train_exact_gp() with rp=False, kept for legacy"""
     return train_exact_gp(trainX, trainY, testX, testY, rp=False, **kwargs)
 
 
 def train_additive_rp_gp(trainX, trainY, testX, testY, **kwargs):
+    """Alias for train_exact_gp() with rp=True, kept for legacy"""
     return train_exact_gp(trainX, trainY, testX, testY, rp=True, **kwargs)
 
 
 def train_lr(trainX, trainY, testX, testY, optimizer='lbfgs', **kwargs):
+    """(As of yet unused) function to create and train a linear regression model"""
     model = LinearRegressionModel(trainX, trainY)
     loss = torch.nn.MSELoss()
 
