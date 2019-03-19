@@ -11,7 +11,7 @@ from torch.utils.data import TensorDataset, DataLoader
 
 
 class RPKernel(gpytorch.kernels.Kernel):
-    # TODO: Add unit tests to verify that it works right.
+    # TODO: Add unit tests to test this better.
     def __init__(self, J, k, d, base_kernels, Ws, bs, activation=None,
                  active_dims=None, learn_weights=False):
         super(RPKernel, self).__init__(active_dims=active_dims)
@@ -25,6 +25,7 @@ class RPKernel(gpytorch.kernels.Kernel):
         if not Ws[0].shape[1] == k:
             raise Exception("Weight matrix 0 number of columns does not match d")
 
+        # Register parameters for autograd if learn_weights. Othwerise, don't.
         self.learn_weights = learn_weights
         if self.learn_weights:
             for i in range(len(Ws)):
@@ -46,6 +47,7 @@ class RPKernel(gpytorch.kernels.Kernel):
 
     @property
     def Ws(self):
+        """Convenience for getting the individual parameters/attributes."""
         toreturn = []
         i = 0
         while hasattr(self, 'W_{}'.format(i)):
@@ -53,9 +55,9 @@ class RPKernel(gpytorch.kernels.Kernel):
             i += 1
         return toreturn
 
-
     @property
     def bs(self):
+        """Convenience for getting individual parameters/attributes."""
         toreturn = []
         i = 0
         while hasattr(self, 'b_{}'.format(i)):
@@ -63,8 +65,8 @@ class RPKernel(gpytorch.kernels.Kernel):
             i += 1
         return toreturn
 
-
     def _project(self, x):
+        """Project matrix x with (multiple) random projections"""
         projections = []
         for j in range(self.J):
             linear_projection = x.matmul(self.Ws[j]) + self.bs[j].unsqueeze(0)
@@ -80,7 +82,9 @@ class RPKernel(gpytorch.kernels.Kernel):
         return projections
 
     def forward(self, x1, x2, **params):
+        # Don't cache proj if weights are changing
         if not self.learn_weights:
+            # if x1 is the same, don't re-project
             if self.last_x1 is not None and torch.equal(x1, self.last_x1):
                 x1_projections = self.cached_projections
             else:
@@ -89,6 +93,7 @@ class RPKernel(gpytorch.kernels.Kernel):
                 self.cached_projections = x1_projections
         else:
             x1_projections = self._project(x1)
+        # if x2 is x1, which is common, don't re-project.
         if torch.equal(x1, x2):
             x2_projections = x1_projections
         else:
@@ -96,18 +101,21 @@ class RPKernel(gpytorch.kernels.Kernel):
 
         base_kernels = []
         for j in range(self.J):
+            # lazy tensor wrapper for kernel evaluation
             k = lazify(self.base_kernels[j](x1_projections[j],
                                             x2_projections[j], **params))
+            # Multiply each kernel by constant 1/J
             base_kernels.append(ConstantMulLazyTensor(k, 1/self.J))
+        # Sum lazy tensor for efficient computations...
         res = SumLazyTensor(*base_kernels)
 
         return res
 
 
 class ExactGPModel(ExactGP):
+    """Basic exact GP model with const mean and a provided kernel"""
     def __init__(self, train_x, train_y, likelihood, kernel):
-        # train_x = torch.FloatTensor(train_x)
-        # train_y = torch.FloatTensor(train_y)
+
 
         super(ExactGPModel, self).__init__(train_x, train_y, likelihood)
         self.mean_module = gpytorch.means.ConstantMean()
@@ -120,6 +128,7 @@ class ExactGPModel(ExactGP):
 
 
 class SVGPRegressionModel(AbstractVariationalGP):
+    """SVGP with provided kernel, Cholesky variational prior, and provided inducing points."""
     def __init__(self, inducing_points, kernel, likelihood):
         variational_distribution = CholeskyVariationalDistribution(
             inducing_points.size(0))
@@ -144,6 +153,24 @@ def train_to_convergence(model, xs, ys,
                          max_iter=100, verbose=0, patience=20,
                          conv_tol=1e-4, check_conv=True, smooth=True,
                          isloss=False, batch_size=None):
+    """The core optimization routine
+
+    :param model: the model (usually a GPyTorch model, usually an ExactGP model) to fit
+    :param xs: training x values
+    :param ys: training target values
+    :param optimizer: torch optimizer function to use, e.g. torch.optim.Adam
+    :param lr: learning rate of the local optimizer
+    :param objective: the objective to optimize
+    :param max_iter: maximum number of epochs
+    :param verbose: if 0, produces no output. If 1, produces update per epoch. If 2, outputs per step
+    :param patience: the number of epochs after which, if the objective does not change by the tolerance, we stop
+    :param conv_tol: the tolerance to check for convergence with
+    :param check_conv: if False, train for exactly max_iter epochs
+    :param smooth: If True, use a moving average to smooth the losses over epochs for checking convergence
+    :param isloss: If True, the objective is considered a loss and is minimized. Otherwise, obj is maximized.
+    :param batch_size: If not None, break the data into mini-batches of size batch_size
+    :return:
+    """
     if optimizer is None:
         optimizer = torch.optim.LBFGS
     verbose = int(verbose)
@@ -195,8 +222,8 @@ def train_to_convergence(model, xs, ys,
                 return
 
 
-
 class LinearRegressionModel(torch.nn.Module):
+    """Currently unused LR model"""
     def __init__(self, trainX, trainY):
         super(LinearRegressionModel, self).__init__()
         [n, d] = trainX.shape
@@ -212,6 +239,7 @@ class LinearRegressionModel(torch.nn.Module):
 
 
 class ELMModule(torch.nn.Module):
+    """Currently unused "extreme learning machine" model"""
     def __init__(self, trainX, trainY, A, b, activation='sigmoid'):
         super(ELMModule, self).__init__()
         [n, d] = trainX.shape
@@ -234,37 +262,7 @@ class ELMModule(torch.nn.Module):
         out = self.linear(hl)
         return out
 
-#
-# def fit_linear_model(model, xs, ys, criterion,
-#                      optimizer: Optional[Type]=None, lr=0.1,
-#                      n_epochs=100, verbose=False, patience=20,
-#                      conv_tol=1e-4, check_conv=True):
-#     optimizer_ = optimizer(model.parameters(), lr=lr)
-#
-#     model.train()
-#
-#     losses = np.zeros((n_epochs,))
-#     for i in range(n_epochs):
-#
-#         # Define and pass in closure to work with LBFGS, but also works with
-#         #     other optimizers like ADAM too.
-#         def closure():
-#             optimizer_.zero_grad()
-#             output = model(xs)
-#             loss = criterion(output, ys)
-#             if verbose:
-#                 print(
-#                     'Iter %d/%d - Loss: %.3f' % (i + 1, n_epochs, loss.item()))
-#             loss.backward()
-#             return loss
-#         loss = optimizer_.step(closure).item()
-#         losses[i] = loss
-#         if check_conv and i >= patience:
-#             if losses[i-patience] - losses[i] < conv_tol:
-#                 if verbose:
-#                     print("Reached convergence, {} - {} < {}".format(losses[i-patience], loss, conv_tol))
-#                 return
-#     model.eval()
+
 def mean_squared_error(y_pred: torch.Tensor, y_true: torch.Tensor):
-    pass
+    """Helper to calculate MSE"""
     return ((y_pred - y_true)**2).mean().item()
