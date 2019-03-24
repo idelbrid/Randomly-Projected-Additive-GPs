@@ -52,7 +52,7 @@ class ProjectionKernel(gpytorch.kernels.Kernel):
         self.activation = activation
         # scale each kernel individually if setting "weighted" to true.
         if weighted:
-            for i in range(len(J)):
+            for i in range(J):
                 base_kernels[i] = gpytorch.kernels.ScaleKernel(base_kernels[i])
         self.base_kernels = torch.nn.ModuleList(base_kernels)
         self.d = d
