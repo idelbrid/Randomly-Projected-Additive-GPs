@@ -1,32 +1,24 @@
 import numpy as np
 import torch
+from math import sqrt
 
 
-def np_gen_rp(k, d, dist='gaussian'):
-    """Generate weight matrix W (k x d) for RP"""
-
-    if dist == 'gaussian':
-        return np.random.standard_normal([k, d]) / np.sqrt(k)
-    elif dist == 'rademacher':
-        return np.random.rand(k, d) > 0.5
-    elif dist == 'uniform':
-        return np.random.uniform(-1, 1, [k, d])
-    else:
-        raise ValueError("Not a valid RP distribution")
-
-
-def gen_rp(k, d, dist='gaussian'):
+def gen_rp(d, k, dist='gaussian'):
     """Generate a random projection matrix (input dim k output dim d)"""
     if dist == 'gaussian':
-        return torch.randn(k, d)/np.sqrt(d)
+        return torch.randn(d, k) / np.sqrt(k)
     elif dist == 'sphere':
-        W = torch.randn(k, d)
+        W = torch.randn(d, k)
         vecnorms = torch.norm(W, p=2, dim=0, keepdim=True)
-        return torch.div(W, vecnorms)
+        W = torch.div(W, vecnorms)
+        # variance of w drawn uniformly from unit sphere is
+        # 1/d
+        return W * sqrt(d) / sqrt(k)
     elif dist == 'bernoulli':
-        return torch.bernoulli(torch.rand(k, d))
+        return (torch.bernoulli(torch.rand(d, k)) * 2 - 1) / sqrt(k)
     elif dist == 'uniform':
-        return torch.rand(k, d) * 2 - 1
+        # variance of uniform on -1, 1 is 1 / 3
+        return (torch.rand(d, k) * 2 - 1) / sqrt(k) * sqrt(3)
     else:
         raise ValueError("Not a valid RP distribution")
 

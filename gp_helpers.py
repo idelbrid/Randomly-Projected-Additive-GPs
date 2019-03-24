@@ -10,10 +10,10 @@ import logging
 from torch.utils.data import TensorDataset, DataLoader
 
 
-class RPKernel(gpytorch.kernels.Kernel):
+class ProjectionKernel(gpytorch.kernels.Kernel):
     # TODO: Add unit tests to test this better.
     def __init__(self, J, k, d, base_kernels, Ws, bs, activation=None,
-                 active_dims=None, learn_weights=False):
+                 active_dims=None, learn_proj=False, weighted=False):
         """
 
         :param J: Number of independent subkernels
@@ -24,9 +24,10 @@ class RPKernel(gpytorch.kernels.Kernel):
         :param bs: List of offset (bias) vectors (could be 0s)
         :param activation: If not None, apply a nonlinear fxn after projection
         :param active_dims: not used ATM
-        :param learn_weights: if true, consider Ws and bs tunable parameters. Otherwise, keep them static.
+        :param learn_proj: if true, consider Ws and bs tunable parameters. Otherwise, keep them static.
+        :param weighted: if true, learn scale of kernels independently
         """
-        super(RPKernel, self).__init__(active_dims=active_dims)
+        super(ProjectionKernel, self).__init__(active_dims=active_dims)
         if not len(base_kernels) == J:
             raise Exception("Number of kernels does not match J")
         if not len(Ws) == J and len(bs) == J:
@@ -37,9 +38,9 @@ class RPKernel(gpytorch.kernels.Kernel):
         if not Ws[0].shape[1] == k:
             raise Exception("Weight matrix 0 number of columns does not match d")
 
-        # Register parameters for autograd if learn_weights. Othwerise, don't.
-        self.learn_weights = learn_weights
-        if self.learn_weights:
+        # Register parameters for autograd if learn_proj. Othwerise, don't.
+        self.learn_proj = learn_proj
+        if self.learn_proj:
             for i in range(len(Ws)):
                 self.register_parameter('W_{}'.format(i), torch.nn.Parameter(Ws[i]))
                 self.register_parameter('b_{}'.format(i), torch.nn.Parameter(bs[i]))
@@ -49,10 +50,15 @@ class RPKernel(gpytorch.kernels.Kernel):
                 self.__setattr__('b_{}'.format(i), bs[i])
 
         self.activation = activation
-        self.base_kernels = base_kernels
+        # scale each kernel individually if setting "weighted" to true.
+        if weighted:
+            for i in range(len(J)):
+                base_kernels[i] = gpytorch.kernels.ScaleKernel(base_kernels[i])
+        self.base_kernels = torch.nn.ModuleList(base_kernels)
         self.d = d
         self.J = J
         self.k = k
+        self.weighted = weighted
         self.last_x1 = None
         self.cached_projections = None
 
@@ -95,7 +101,7 @@ class RPKernel(gpytorch.kernels.Kernel):
 
     def forward(self, x1, x2, **params):
         # Don't cache proj if weights are changing
-        if not self.learn_weights:
+        if not self.learn_proj:
             # if x1 is the same, don't re-project
             if self.last_x1 is not None and torch.equal(x1, self.last_x1):
                 x1_projections = self.cached_projections
