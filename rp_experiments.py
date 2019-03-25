@@ -8,6 +8,7 @@ import traceback
 import os
 from scipy.io import loadmat
 import json
+import gpytorch
 
 from gp_helpers import mean_squared_error
 from training_routines import train_SE_gp, train_additive_rp_gp
@@ -290,10 +291,11 @@ def rp_compare_ablation(filename, fit=True, ard=False,
 
 if __name__ == '__main__':
     def run():
-        run_experiment(train_additive_rp_gp, dict(verbose=False, ard=False, activation=None,
-                                                  optimizer='adam', n_epochs=100, lr=0.1, patience=20, k=1, J=1,
-                                                  smooth=True, noise_prior=True, ski=True, grid_ratio=1.0),
-                       'pumadyn32nm', 0.1, cv=False) 
+        with gpytorch.settings.fast_pred_var(True):
+            run_experiment(train_additive_rp_gp, dict(verbose=False, ard=False, activation=None,
+                                                      optimizer='adam', n_epochs=100, lr=0.1, patience=20, k=1, J=1,
+                                                      smooth=True, noise_prior=True, ski=True, grid_ratio=1.0),
+                           'sml', 0.1, cv=False)
 
     import cProfile
 
