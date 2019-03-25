@@ -11,7 +11,6 @@ from torch.utils.data import TensorDataset, DataLoader
 
 
 class ProjectionKernel(gpytorch.kernels.Kernel):
-    # TODO: Add unit tests to test this better.
     def __init__(self, J, k, d, base_kernels, Ws, bs, activation=None,
                  active_dims=None, learn_proj=False, weighted=False):
         """
