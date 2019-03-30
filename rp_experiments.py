@@ -285,24 +285,9 @@ def rp_compare_ablation(filename, se_options, rp_options, fit=True,
 
 if __name__ == '__main__':
     def run():
-        run_experiment(train_svi_gp, dict(verbose=2, rp=False, ard=False, activation=None, optimizer='adam',
-                   n_epochs=1000, lr=0.1, patience=5, smooth=True,
-                   noise_prior=True, ski=False, grid_size=None,
-                   batch_size=10),
-                       'gas', 0.1, cv=False)
+       with gpytorch.settings.fast_pred_var(True):
+            run_experiment(train_additive_rp_gp, dict(verbose=False, ard=False, activation=None,
+                                                      optimizer='adam', n_epochs=100, lr=0.1, patience=20, k=1, J=1,
+                                                      smooth=True, noise_prior=True, ski=True, grid_ratio=1.0),
+                           'sml', 0.1, cv=False)
 
-    import cProfile
-
-    cProfile.run('run()', 'runstats_variational_rbf_gas')
-    # se_options = dict(verbose=False, lr=0.1, optimizer='adam',
-    #                   n_epochs=1000, patience=20, smooth=True,
-    #                   ard=False, noise_prior=True)
-    # # The same actually since it doesn't depend on k or J
-    # rp_options = dict(verbose=False, lr=0.1, optimizer='adam',
-    #                   n_epochs=1000, patience=20, smooth=True,
-    #                   ard=False, noise_prior=True)
-    #
-    # with gpytorch.settings.cg_tolerance(0.01):
-    #     rp_compare_ablation('3-24-rp-ablation.csv', rp_options=rp_options,
-    #                         se_options=se_options, fit=True, optimizer='adam',
-    #                         include_se=True, repeats=1)
