@@ -8,9 +8,10 @@ import traceback
 import os
 from scipy.io import loadmat
 import json
+import gpytorch
 
 from gp_helpers import mean_squared_error
-from training_routines import train_SE_gp, train_additive_rp_gp
+from training_routines import train_SE_gp, train_additive_rp_gp, train_svi_gp
 
 
 def old_load_dataset(name: str):
@@ -212,10 +213,9 @@ def run_experiment_suite(datasets,
     return df
 
 
-def rp_compare_ablation(filename, fit=True, ard=False,
+def rp_compare_ablation(filename, se_options, rp_options, fit=True,
                         dsets=get_small_datasets()+get_medium_datasets(),
-                        optimizer='lbfgs', lr=0.1, patience=10, verbose=False,
-                        include_se=True, repeats=1, noise_prior=False):
+                        optimizer='lbfgs', include_se=True, repeats=1):
     df = pd.DataFrame()
 
     if fit:
@@ -227,19 +227,19 @@ def rp_compare_ablation(filename, fit=True, ard=False,
     if filename is not None:
         fname = filename
 
+    se_options['k'] = 0
+    se_options['J'] = 0
+
 
     for dataset in dsets:
         print(dataset, 'starting')
 
         if include_se:
             # regular SE kernel
-            options = dict(verbose=verbose, lr=lr, optimizer=optimizer,
-                           n_epochs=epochs, patience=patience, smooth=True,
-                           ard=ard, noise_prior=noise_prior)
-            options_json = json.dumps(options)
+            options_json = json.dumps(se_options)
             try:
 
-                result = run_experiment(train_SE_gp, options, dataset=dataset,
+                result = run_experiment(train_SE_gp, se_options, dataset=dataset,
                                         split=0.1, cv=True, repeats=repeats)
                 result['RP'] = False
                 result['dataset'] = dataset
@@ -257,13 +257,11 @@ def rp_compare_ablation(filename, fit=True, ard=False,
 
         for k in [1, 4, 10]:
             for J in [1, 2, 3, 5, 8, 13, 20]:
-                options = dict(verbose=False, ard=ard, activation=None,
-                                optimizer=optimizer, n_epochs=epochs,
-                                lr=lr, patience=patience, k=k, J=J,
-                                smooth=True, noise_prior=noise_prior)
-                options_json = json.dumps(options)
+                rp_options['k'] = k
+                rp_options['J'] = J
+                options_json = json.dumps(rp_options)
                 try:
-                    result = run_experiment(train_additive_rp_gp, options,
+                    result = run_experiment(train_additive_rp_gp, rp_options,
                                             dataset=dataset, split=0.1, cv=True,
                                             repeats=repeats)
                     result['RP'] = True
@@ -285,17 +283,26 @@ def rp_compare_ablation(filename, fit=True, ard=False,
                 df.to_csv(fname)
 
 
-
-
-
 if __name__ == '__main__':
     def run():
-        run_experiment(train_additive_rp_gp, dict(verbose=False, ard=False, activation=None,
-                                                  optimizer='adam', n_epochs=100, lr=0.1, patience=20, k=1, J=1,
-                                                  smooth=True, noise_prior=True, ski=True, grid_ratio=1.0),
-                       'pumadyn32nm', 0.1, cv=False) 
+        run_experiment(train_svi_gp, dict(verbose=2, rp=False, ard=False, activation=None, optimizer='adam',
+                   n_epochs=1000, lr=0.1, patience=5, smooth=True,
+                   noise_prior=True, ski=False, grid_size=None,
+                   batch_size=10),
+                       'gas', 0.1, cv=False)
 
     import cProfile
 
-    cProfile.run('run()', 'restats')
-
+    cProfile.run('run()', 'runstats_variational_rbf_gas')
+    # se_options = dict(verbose=False, lr=0.1, optimizer='adam',
+    #                   n_epochs=1000, patience=20, smooth=True,
+    #                   ard=False, noise_prior=True)
+    # # The same actually since it doesn't depend on k or J
+    # rp_options = dict(verbose=False, lr=0.1, optimizer='adam',
+    #                   n_epochs=1000, patience=20, smooth=True,
+    #                   ard=False, noise_prior=True)
+    #
+    # with gpytorch.settings.cg_tolerance(0.01):
+    #     rp_compare_ablation('3-24-rp-ablation.csv', rp_options=rp_options,
+    #                         se_options=se_options, fit=True, optimizer='adam',
+    #                         include_se=True, repeats=1)
