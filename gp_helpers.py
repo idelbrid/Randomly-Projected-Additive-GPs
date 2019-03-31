@@ -232,11 +232,12 @@ def train_to_convergence(model, xs, ys,
             if smooth and ma[i-patience] - ma[i] < conv_tol:
                 if verbose > 0:
                     print("Reached convergence at {}, MA {} - {} < {}".format(total_loss, ma[i-patience], ma[i], conv_tol))
-                return
+                return i
             if not smooth and losses[i-patience] - losses[i] < conv_tol:
                 if verbose > 0:
                     print("Reached convergence at {}, {} - {} < {}".format(total_loss, losses[i-patience], total_loss, conv_tol))
-                return
+                return i
+    return max_iter
 
 
 class LinearRegressionModel(torch.nn.Module):

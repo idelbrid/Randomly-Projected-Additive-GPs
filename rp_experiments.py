@@ -73,6 +73,7 @@ def run_experiment(training_routine: Callable,
                    addl_metrics: Dict={},
                    repeats=1,
                    error_repeats=10,
+                   normalize_using_train=True,
                    ):
     """Main function to run a model on a dataset.
 
@@ -118,6 +119,13 @@ def run_experiment(training_routine: Callable,
         test = dataset.iloc[n_per_fold*fold:n_per_fold*(fold+1)]
         train = pd.concat([train,
                            dataset.iloc[n_per_fold*(fold+1):]])
+        if normalize_using_train:
+            mu = train[features + ['target']].mean()
+            sigma = train[features + ['target']].std()
+            train[features + ['target']] -= mu
+            train[features + ['target']] /= sigma
+            test[features + ['target']] -= mu
+            test[features + ['target']] /= sigma
         succeed = False
         n_errors = 0
         while not succeed and n_errors < error_repeats:

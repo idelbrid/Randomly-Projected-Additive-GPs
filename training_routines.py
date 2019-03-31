@@ -36,7 +36,7 @@ def _save_state_dict(model):
 
 
 def create_rp_kernel(d, k, J, ard=False, activation=None, ski=False,
-                     grid_size=None, learn_proj=False, weighted=False):
+                     grid_size=None, learn_proj=False, weighted=False, kernel_type='RBF'):
     """Construct a RP kernel object (though not random if learn_proj is true)
     d is dimensionality of data
     k is the dimensionality of the projections
@@ -61,7 +61,12 @@ def create_rp_kernel(d, k, J, ard=False, activation=None, ski=False,
     bs = [torch.zeros(k) for _ in range(J)]
     for j in range(J):
         projs.append(rp.gen_rp(d, k))  # d, k just output dimensions of matrix
-        kernel = gpytorch.kernels.RBFKernel(ard_num_dims)
+        if kernel_type == 'RBF':
+            kernel = gpytorch.kernels.RBFKernel(ard_num_dims)
+        elif kernel_type == 'Matern':
+            kernel = gpytorch.kernels.MaternKernel(nu=1.5)
+        else:
+            raise ValueError("Unknown kernel type")
         if ski:
             kernel = gpytorch.kernels.GridInterpolationKernel(kernel,
                                                               grid_size=grid_size,
@@ -72,7 +77,7 @@ def create_rp_kernel(d, k, J, ard=False, activation=None, ski=False,
     return ProjectionKernel(J, k, d, kernels, projs, bs, activation=activation, learn_proj=learn_proj, weighted=weighted)
 
 
-def create_additive_kernel(d, ski=False, grid_size=None, weighted=False):
+def create_additive_kernel(d, ski=False, grid_size=None, weighted=False, kernel_type='RBF'):
     """Inefficient implementation of a kernel where each dimension has its own RBF subkernel."""
     k = 1
     J = d
@@ -83,7 +88,12 @@ def create_additive_kernel(d, ski=False, grid_size=None, weighted=False):
         P = torch.zeros(d, k)
         P[j, :] = 1
         projs.append(P)
-        kernel = gpytorch.kernels.RBFKernel()
+        if kernel_type == 'RBF':
+            kernel = gpytorch.kernels.RBFKernel()
+        elif kernel_type == 'Matern':
+            kernel = gpytorch.kernels.MaternKernel(nu=1.5)
+        else:
+            raise ValueError("Unknown kernel type")
         if ski:
             kernel = gpytorch.kernels.GridInterpolationKernel(kernel,
                                                               grid_size=grid_size,
@@ -93,13 +103,18 @@ def create_additive_kernel(d, ski=False, grid_size=None, weighted=False):
                             learn_proj=False, weighted=weighted)
 
 
-def create_rbf_kernel(d, ard=False, ski=False, grid_size=None):
+def create_full_kernel(d, ard=False, ski=False, grid_size=None, kernel_type='RBF'):
     """Helper to create an RBF kernel object with these options."""
     if ard:
         ard_num_dims = d
     else:
         ard_num_dims = None
-    kernel = RBFKernel(ard_num_dims=ard_num_dims)
+    if kernel_type == 'RBF':
+        kernel = gpytorch.kernels.RBFKernel(ard_num_dims)
+    elif kernel_type == 'Matern':
+        kernel = gpytorch.kernels.MaternKernel(nu=1.5)
+    else:
+        raise ValueError("Unknown kernel type")
     if ski:
         kernel = GridInterpolationKernel(kernel, num_dims=d,
                                          grid_size=grid_size)
@@ -108,7 +123,7 @@ def create_rbf_kernel(d, ard=False, ski=False, grid_size=None):
 
 def create_svi_gp(trainX, rp, k, J, ard, activation, noise_prior, ski,
                   grid_ratio, grid_size, learn_proj=False,
-                  additive=False, weighted=False):
+                  additive=False, weighted=False, kernel_type='RBF'):
     """Create a SVGP model with a specified kernel.
     rp: if True, use a random projection kernel
     k: dimension of the projections (ignored if rp is False)
@@ -136,11 +151,11 @@ def create_svi_gp(trainX, rp, k, J, ard, activation, noise_prior, ski,
 
     if rp:
         kernel = create_rp_kernel(d, k, J, ard, activation, ski=False,
-                                  learn_proj=learn_proj, weighted=weighted)
+                                  learn_proj=learn_proj, weighted=weighted, kernel_type=kernel_type)
     elif additive:
-        kernel = create_additive_kernel(d, ski=False, weighted=weighted)
+        kernel = create_additive_kernel(d, ski=False, weighted=weighted, kernel_type=kernel_type)
     else:
-        kernel = create_rbf_kernel(d, ard, ski=False)
+        kernel = create_full_kernel(d, ard, ski=False, kernel_type=kernel_type)
     kernel = ScaleKernel(kernel)
 
     # Choose initial inducing points as a subset of the data randomly chosen
@@ -156,13 +171,13 @@ def train_svi_gp(trainX, trainY, testX, testY, rp, k=None, J=None, ard=False,
                  activation=None, optimizer='adam', n_epochs=100, lr=0.1,
                  verbose=False, patience=10, smooth=True, noise_prior=False,
                  ski=False, grid_ratio=1, grid_size=None, batch_size=64,
-                 learn_proj=False, additive=False, weighted=False):
+                 learn_proj=False, additive=False, weighted=False, kernel_type='RBF', **train_kwargs):
     """Create and train a SVGP with the given parameters."""
 
     model, likelihood = create_svi_gp(trainX, rp, k, J, ard, activation,
                                       noise_prior, ski, grid_ratio, grid_size,
                                       learn_proj=learn_proj,
-                                      additive=additive, weighted=weighted)
+                                      additive=additive, weighted=weighted, kernel_type=kernel_type)
     mll = VariationalELBO(likelihood, model, trainY.size(0), combine_terms=False)
 
     def nmll(*args):
@@ -173,15 +188,16 @@ def train_svi_gp(trainX, trainY, testX, testY, rp, k=None, J=None, ard=False,
 
     likelihood.train()
     model.train()
-    train_to_convergence(model, trainX, trainY, lr=lr, objective=nmll,
+    trained_epochs = train_to_convergence(model, trainX, trainY, lr=lr, objective=nmll,
                          max_iter=n_epochs, verbose=verbose, patience=patience,
                          smooth=smooth, isloss=True, batch_size=batch_size,
-                         optimizer=optimizer_)
+                         optimizer=optimizer_, **train_kwargs)
     model.eval()
     likelihood.eval()
     mll.eval()
 
     model_metrics = dict()
+    model_metrics['trained_epochs'] = trained_epochs
     with torch.no_grad():
         model.train()  # consider prior for evaluation on train dataset
         likelihood.train()
@@ -208,7 +224,7 @@ def train_svi_gp(trainX, trainY, testX, testY, rp, k=None, J=None, ard=False,
 
 
 def create_exact_gp(trainX, trainY, rp, k, J, ard, activation, noise_prior, ski,
-                    grid_ratio, grid_size, learn_proj=False, additive=False, weighted=False):
+                    grid_ratio, grid_size, learn_proj=False, additive=False, weighted=False, kernel_type='RBF'):
     """Create an exact GP model with a specified kernel.
         rp: if True, use a random projection kernel
         k: dimension of the projections (ignored if rp is False)
@@ -236,16 +252,16 @@ def create_exact_gp(trainX, trainY, rp, k, J, ard, activation, noise_prior, ski,
         if not additive:
             if grid_size is None:
                 grid_size = int(grid_ratio * math.pow(n, 1 / d))
-            kernel = create_rbf_kernel(d, ard, ski, grid_size)
+            kernel = create_full_kernel(d, ard, ski, grid_size, kernel_type=kernel_type)
         else:
             if grid_size is None:
                 grid_size = int(grid_ratio * math.pow(n, 1))
-            kernel = create_additive_kernel(d, ski=ski, grid_size=grid_size, weighted=weighted)
+            kernel = create_additive_kernel(d, ski=ski, grid_size=grid_size, weighted=weighted, kernel_type=kernel_type)
     else:
         if grid_size is None:
             grid_size = int(grid_ratio * math.pow(n, 1 / k))
         kernel = create_rp_kernel(d, k, J, ard, activation, ski, grid_size,
-                                  learn_proj=learn_proj, weighted=weighted)
+                                  learn_proj=learn_proj, weighted=weighted, kernel_type=kernel_type)
     kernel = gpytorch.kernels.ScaleKernel(kernel)
     model = ExactGPModel(trainX, trainY, likelihood, kernel)
     return model, likelihood
@@ -255,13 +271,13 @@ def train_exact_gp(trainX, trainY, testX, testY, rp, k=None, J=None, ard=False,
                    activation=None, optimizer='lbfgs', n_epochs=100, lr=0.1,
                    verbose=False, patience=20, smooth=True, noise_prior=False,
                    ski=False, grid_ratio=1, grid_size=None, learn_proj=False,
-                   additive=False, weighted=False):
+                   additive=False, weighted=False, kernel_type='RBF', **train_kwargs):
     """Create and train an exact GP with the given options"""
     model, likelihood = create_exact_gp(trainX, trainY, rp, k, J, ard,
                                         activation, noise_prior, ski,
                                         grid_ratio, grid_size,
                                         learn_proj=learn_proj,
-                                        additive=additive, weighted=weighted)
+                                        additive=additive, weighted=weighted, kernel_type=kernel_type)
 
     # regular marginal log likelihood
     mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
@@ -269,15 +285,16 @@ def train_exact_gp(trainX, trainY, testX, testY, rp, k=None, J=None, ard=False,
     optimizer_ = _map_to_optim(optimizer)
 
     # fit GP
-    train_to_convergence(model, trainX, trainY, optimizer=optimizer_,
+    trained_epochs = train_to_convergence(model, trainX, trainY, optimizer=optimizer_,
                          isloss=False, lr=lr, max_iter=n_epochs,
                          verbose=verbose, objective=mll, patience=patience,
-                         smooth=smooth)
+                         smooth=smooth, **train_kwargs)
     model.eval()
     likelihood.eval()
     mll.eval()
 
     model_metrics = dict()
+    model_metrics['trained_epochs'] = trained_epochs
     with torch.no_grad():
         model.train()  # consider prior for evaluation on train dataset
         likelihood.train()
@@ -309,7 +326,7 @@ def train_additive_rp_gp(trainX, trainY, testX, testY, **kwargs):
     return train_exact_gp(trainX, trainY, testX, testY, rp=True, **kwargs)
 
 
-def train_lr(trainX, trainY, testX, testY, optimizer='lbfgs', **kwargs):
+def train_lr(trainX, trainY, testX, testY, optimizer='lbfgs', **train_kwargs):
     """(As of yet unused) function to create and train a linear regression model"""
     model = LinearRegressionModel(trainX, trainY)
     loss = torch.nn.MSELoss()
@@ -323,7 +340,7 @@ def train_lr(trainX, trainY, testX, testY, optimizer='lbfgs', **kwargs):
     else:
         raise ValueError("Unknown optimizer {}".format(optimizer))
     train_to_convergence(model, trainX, trainY, optimizer_, objective=loss,
-                         isloss=True, **kwargs)
+                         isloss=True, **train_kwargs)
 
     model.eval()
     model_metrics = dict()
