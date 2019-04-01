@@ -35,7 +35,7 @@ class ProjectionKernel(gpytorch.kernels.Kernel):
         if not Ws[0].shape[0] == d:
             raise Exception("Weight matrix 0 number of rows does not match d")
         if not Ws[0].shape[1] == k:
-            raise Exception("Weight matrix 0 number of columns does not match d")
+            raise Exception("Weight matrix 0 number of columns does not match k")
 
         # Register parameters for autograd if learn_proj. Othwerise, don't.
         self.learn_proj = learn_proj

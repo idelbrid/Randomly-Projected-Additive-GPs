@@ -121,11 +121,14 @@ def run_experiment(training_routine: Callable,
                            dataset.iloc[n_per_fold*(fold+1):]])
         if normalize_using_train:
             mu = train[features + ['target']].mean()
-            sigma = train[features + ['target']].std()
+
             train[features + ['target']] -= mu
-            train[features + ['target']] /= sigma
             test[features + ['target']] -= mu
-            test[features + ['target']] /= sigma
+            for f in features + ['target']:
+                sigma = train[f].std()
+                if sigma > 0:
+                    train[f] /= sigma
+                    test[f] /= sigma
         succeed = False
         n_errors = 0
         while not succeed and n_errors < error_repeats:
@@ -139,7 +142,7 @@ def run_experiment(training_routine: Callable,
                     result_dict = {'fold': fold,
                                    'repeat': repeat,
                                    'n': len(dataset),
-                                   'd': len(features)-2}
+                                   'd': len(features)}
 
                     start = time.perf_counter()
                     ret = training_routine(trainX, trainY, testX,
