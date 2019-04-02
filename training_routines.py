@@ -10,6 +10,7 @@ from gpytorch.kernels import ScaleKernel, RBFKernel, GridInterpolationKernel
 from gpytorch.mlls import VariationalELBO, VariationalMarginalLogLikelihood
 from gp_helpers import SVGPRegressionModel
 import torch
+from sklearn.decomposition import PCA
 
 
 def _map_to_optim(optimizer):
@@ -34,7 +35,7 @@ def _save_state_dict(model):
     torch.save(d, 'models/' + fname)
     return fname
 
-
+# TODO: Refactor by wrapping kernel "kinds" such as RP kernel, additive kernel etc. in a class and use inheritance...
 def create_rp_kernel(d, k, J, ard=False, activation=None, ski=False,
                      grid_size=None, learn_proj=False, weighted=False, kernel_type='RBF'):
     """Construct a RP kernel object (though not random if learn_proj is true)
@@ -101,6 +102,44 @@ def create_additive_kernel(d, ski=False, grid_size=None, weighted=False, kernel_
         kernels.append(kernel)
     return ProjectionKernel(J, k, d, kernels, projs, bs, activation=None,
                             learn_proj=False, weighted=weighted)
+
+
+def create_pca_kernel(trainX, random_projections=False, k=1, J=1, explained_variance=.99, ski=False, grid_size=None,
+                      weighted=False, kernel_type='RBF'):
+    [n, d] = trainX.shape
+    if not random_projections and k != 1:
+        raise ValueError("Additive RBF kernel selected but k is not 1.")
+    if explained_variance > 1 or explained_variance < 0:
+        raise ValueError("Explained variance ratio should be between 0 and 1.")
+    if explained_variance == 1:
+        n_components = d
+    else:
+        n_components = explained_variance
+    pca = PCA(n_components, copy=False, random_state=123456)
+    pca.fit(trainX)
+    W = torch.tensor(pca.components_.T, dtype=torch.float)
+    D = torch.tensor(pca.explained_variance_, dtype=torch.float)
+    if not random_projections:
+        J = len(D)
+
+    kernels = []
+    projs = []
+    bs = [torch.zeros(k) for _ in range(J)]
+    for j in range(J):
+        if random_projections:
+            projs.append(rp.gen_pca_rp(d, k, W.t(), D))
+        else:
+            projs.append(W[:, j].unsqueeze(1))
+        if kernel_type == 'RBF':
+            kernel = gpytorch.kernels.RBFKernel()
+        elif kernel_type == 'Matern':
+            kernel = gpytorch.kernels.MaternKernel(nu=1.5)
+        else:
+            raise ValueError("Unknown kernel type")
+        if ski:
+            kernel = gpytorch.kernels.GridInterpolationKernel(kernel, grid_size=grid_size, num_dims=k)
+        kernels.append(kernel)
+    return ProjectionKernel(J, k, d, kernels, projs, bs, activation=None, learn_proj=False, weighted=weighted)
 
 
 def create_full_kernel(d, ard=False, ski=False, grid_size=None, kernel_type='RBF'):
@@ -223,8 +262,8 @@ def train_svi_gp(trainX, trainY, testX, testY, rp, k=None, J=None, ard=False,
     #     pass
 
 
-def create_exact_gp(trainX, trainY, rp, k, J, ard, activation, noise_prior, ski,
-                    grid_ratio, grid_size, learn_proj=False, additive=False, weighted=False, kernel_type='RBF'):
+def create_exact_gp(trainX, trainY, kind, k, J, ard, activation, noise_prior, ski,
+                    grid_ratio, grid_size, learn_proj=False, weighted=False, kernel_type='RBF'):
     """Create an exact GP model with a specified kernel.
         rp: if True, use a random projection kernel
         k: dimension of the projections (ignored if rp is False)
@@ -239,6 +278,8 @@ def create_exact_gp(trainX, trainY, rp, k, J, ard, activation, noise_prior, ski,
         additive: if True, (and not RP) use an additive kernel instead of RP or RBF
         """
     [n, d] = trainX.shape
+    if kind not in ['full', 'rp', 'additive', 'pca', 'pca_rp']:
+        raise ValueError("Unknown kernel structure type {}".format(kind))
 
     # regular Gaussian likelihood for regression problem
     if noise_prior:
@@ -248,36 +289,51 @@ def create_exact_gp(trainX, trainY, rp, k, J, ard, activation, noise_prior, ski,
 
     likelihood = gpytorch.likelihoods.GaussianLikelihood(
         noise_prior=noise_prior_)
-    if not rp:
-        if not additive:
-            if grid_size is None:
-                grid_size = int(grid_ratio * math.pow(n, 1 / d))
-            kernel = create_full_kernel(d, ard, ski, grid_size, kernel_type=kernel_type)
-        else:
-            if grid_size is None:
-                grid_size = int(grid_ratio * math.pow(n, 1))
-            kernel = create_additive_kernel(d, ski=ski, grid_size=grid_size, weighted=weighted, kernel_type=kernel_type)
-    else:
+    if kind == 'full':
+        if grid_size is None:
+            grid_size = int(grid_ratio * math.pow(n, 1 / d))
+        kernel = create_full_kernel(d, ard, ski, grid_size, kernel_type=kernel_type)
+    elif kind == 'additive':
+        if grid_size is None:
+            grid_size = int(grid_ratio * math.pow(n, 1))
+        kernel = create_additive_kernel(d, ski=ski, grid_size=grid_size, weighted=weighted, kernel_type=kernel_type)
+    elif kind == 'pca':
+        # TODO: modify to work with PCA
+        if grid_size is None:
+            grid_size = int(grid_ratio * math.pow(n, 1))
+        kernel = create_pca_kernel(trainX, random_projections=False, k=1, ski=ski, grid_size=grid_size,
+                                   weighted=weighted, kernel_type=kernel_type)
+    elif kind == 'rp':
         if grid_size is None:
             grid_size = int(grid_ratio * math.pow(n, 1 / k))
         kernel = create_rp_kernel(d, k, J, ard, activation, ski, grid_size,
                                   learn_proj=learn_proj, weighted=weighted, kernel_type=kernel_type)
+    elif kind == 'pca_rp':
+        # TODO: modify to work with PCA RP
+        if grid_size is None:
+            grid_size = int(grid_ratio * math.pow(n, 1 / k))
+        kernel = create_pca_kernel(trainX, random_projections=True, k=k, J=J, ski=ski, grid_size=grid_size,
+                                   weighted=weighted, kernel_type=kernel_type)
+    else:
+        raise ValueError()
+
     kernel = gpytorch.kernels.ScaleKernel(kernel)
     model = ExactGPModel(trainX, trainY, likelihood, kernel)
     return model, likelihood
 
 
-def train_exact_gp(trainX, trainY, testX, testY, rp, k=None, J=None, ard=False,
+def train_exact_gp(trainX, trainY, testX, testY, kind, k=None, J=None, ard=False,
                    activation=None, optimizer='lbfgs', n_epochs=100, lr=0.1,
                    verbose=False, patience=20, smooth=True, noise_prior=False,
                    ski=False, grid_ratio=1, grid_size=None, learn_proj=False,
-                   additive=False, weighted=False, kernel_type='RBF', **train_kwargs):
+                   weighted=False, kernel_type='RBF',
+                   **train_kwargs):
     """Create and train an exact GP with the given options"""
-    model, likelihood = create_exact_gp(trainX, trainY, rp, k, J, ard,
+    model, likelihood = create_exact_gp(trainX, trainY, kind, k, J, ard,
                                         activation, noise_prior, ski,
                                         grid_ratio, grid_size,
                                         learn_proj=learn_proj,
-                                        additive=additive, weighted=weighted, kernel_type=kernel_type)
+                                        weighted=weighted, kernel_type=kernel_type)
 
     # regular marginal log likelihood
     mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
@@ -318,12 +374,12 @@ def train_exact_gp(trainX, trainY, testX, testY, rp, k=None, J=None, ard=False,
 
 def train_SE_gp(trainX, trainY, testX, testY, **kwargs):
     """Alias for train_exact_gp() with rp=False, kept for legacy"""
-    return train_exact_gp(trainX, trainY, testX, testY, rp=False, **kwargs)
+    return train_exact_gp(trainX, trainY, testX, testY, kind='full', **kwargs)
 
 
 def train_additive_rp_gp(trainX, trainY, testX, testY, **kwargs):
     """Alias for train_exact_gp() with rp=True, kept for legacy"""
-    return train_exact_gp(trainX, trainY, testX, testY, rp=True, **kwargs)
+    return train_exact_gp(trainX, trainY, testX, testY, rp='rp', **kwargs)
 
 
 def train_lr(trainX, trainY, testX, testY, optimizer='lbfgs', **train_kwargs):

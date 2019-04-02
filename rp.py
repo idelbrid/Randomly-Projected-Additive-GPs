@@ -4,7 +4,7 @@ from math import sqrt
 
 
 def gen_rp(d, k, dist='gaussian'):
-    """Generate a random projection matrix (input dim k output dim d)"""
+    """Generate a random projection matrix (input dim d output dim k)"""
     if dist == 'gaussian':
         return torch.randn(d, k) / np.sqrt(k)
     elif dist == 'sphere':
@@ -21,6 +21,27 @@ def gen_rp(d, k, dist='gaussian'):
         return (torch.rand(d, k) * 2 - 1) / sqrt(k) * sqrt(3)
     else:
         raise ValueError("Not a valid RP distribution")
+
+
+def gen_pca_rp(d, k, W, D):
+    """
+    :param d: dimension of data
+    :param k: dimension of projection
+    :param W: eigenvectors (as p x d matrix)
+    :param D: eigenvalues (as p x 1 vector)
+    :return:
+    """
+    p = W.shape[0]
+    if not p == D.shape[0] and d >= p:
+        raise ValueError("dimension didn't make sense. Check orientation of eigenvectors or eigenvalues")
+    distribution = torch.distributions.MultivariateNormal(torch.zeros(p),
+                                                           covariance_matrix=torch.diag(D))
+    samples = distribution.rsample([k])  # k x p
+    samples = samples.matmul(W)  # (k x p)*(p x d) = k x d
+    samples = samples.t()  # make it match gen_rp (input dim x output dim)
+    vecnorms = torch.norm(samples, p=2, dim=0, keepdim=True)
+    samples = torch.div(samples, vecnorms)
+    return samples * sqrt(d) / sqrt(k)
 
 
 def Sigmoid(a: torch.Tensor, b, x):
@@ -89,7 +110,6 @@ def ELM(X, K, dist='gaussian', activation='sigmoid'):
         raise ValueError("Invalid activation")
 
     return fn(A, b, X), A, b
-
 
 
 if __name__ == '__main__':

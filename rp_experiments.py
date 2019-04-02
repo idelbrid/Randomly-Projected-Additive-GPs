@@ -127,8 +127,8 @@ def run_experiment(training_routine: Callable,
             for f in features + ['target']:
                 sigma = train[f].std()
                 if sigma > 0:
-                    train[f] /= sigma
-                    test[f] /= sigma
+                    train.loc[:, f] /= sigma
+                    test.loc[:, f] /= sigma
         succeed = False
         n_errors = 0
         while not succeed and n_errors < error_repeats:
