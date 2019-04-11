@@ -3,16 +3,105 @@ import gpytorch
 from gpytorch.models import ExactGP, AbstractVariationalGP
 from gpytorch.variational import CholeskyVariationalDistribution, VariationalStrategy
 # from gpytorch.lazy.zero_lazy_tensor import ZeroLazyTensor
-from gpytorch.lazy import SumLazyTensor, ConstantMulLazyTensor, lazify
+from gpytorch.lazy import SumLazyTensor, ConstantMulLazyTensor, lazify, MulLazyTensor
 from typing import Optional, Type
 import numpy as np
 import logging
 from torch.utils.data import TensorDataset, DataLoader
 
 
+class PolynomialProjectionKernel(gpytorch.kernels.Kernel):
+    def __init__(self, J, k, d, base_kernel, Ws, bs, activation=None,
+                 learn_proj=False, weighted=False):
+        super(PolynomialProjectionKernel, self).__init__()
+        if not len(Ws) == J and len(bs) == J:
+            raise Exception()
+        if not Ws[0].shape[0] == d:
+            raise Exception()
+        if not Ws[0].shape[1] == k:
+            raise Exception
+
+        self.learn_proj = learn_proj
+
+        # Register parameters for autograd if learn_proj. Othwerise, don't.
+        W = torch.cat(Ws, dim=1)
+        b = torch.cat(bs, dim=0)
+        if self.learn_proj:
+            self.register_parameter('W', torch.nn.Parameter(W))
+            self.register_parameter('b', torch.nn.Parameter(b))
+        else:
+            self.W = W
+            self.b = b
+
+        # if self.learn_proj:
+        #     for i in range(len(Ws)):
+        #         self.register_parameter('W_{}'.format(i),
+        #                                 torch.nn.Parameter(Ws[i]))
+        #         self.register_parameter('b_{}'.format(i),
+        #                                 torch.nn.Parameter(bs[i]))
+        # else:
+        #     for i in range(len(Ws)):
+        #         self.__setattr__('W_{}'.format(i), Ws[i])
+        #         self.__setattr__('b_{}'.format(i), bs[i])
+
+        self.activation = activation
+
+        kernels = []
+        for i in range(J):
+            product_kernels = []
+            for j in range(k):
+                product_kernels.append(base_kernel(active_dims=i*k+j))
+            product_kernel = gpytorch.kernels.ProductKernel(*product_kernels)
+            if weighted:
+                product_kernel = gpytorch.kernels.ScaleKernel(product_kernel)
+                product_kernel.initialize(outputscale=1/J)
+            else:
+                product_kernel = gpytorch.kernels.ScaleKernel(product_kernel)
+                product_kernel.initialize(outputscale=1 / J)
+                product_kernel.raw_outputscale.requires_grad = False
+            kernels.append(product_kernel)
+        kernel = gpytorch.kernels.AdditiveKernel(*kernels)
+
+        self.kernel = kernel
+        self.d = d
+        self.J = J
+        self.k = k
+        self.weighted = weighted
+        self.last_x1 = None
+        self.cached_projections = None
+
+    def _project(self, x):
+        """Project matrix x with (multiple) random projections"""
+        projected = x.matmul(self.W)
+        projected = projected + self.b.unsqueeze(0)
+        if self.activation is not None:
+            if self.activation == 'sigmoid':
+                projected = torch.nn.functional.sigmoid(projected)
+        return projected
+
+    def forward(self, x1, x2, **params):
+        # Don't cache proj if weights are changing
+        if not self.learn_proj:
+            # if x1 is the same, don't re-project
+            if self.last_x1 is not None and torch.equal(x1, self.last_x1):
+                x1_projections = self.cached_projections
+            else:
+                x1_projections = self._project(x1)
+                self.last_x1 = x1
+                self.cached_projections = x1_projections
+        else:
+            x1_projections = self._project(x1)
+        # if x2 is x1, which is common, don't re-project.
+        if torch.equal(x1, x2):
+            return self.kernel(x1_projections)
+        else:
+            x2_projections = self._project(x2)
+            return self.kernel(x1_projections, x2_projections)
+
+
 class ProjectionKernel(gpytorch.kernels.Kernel):
     def __init__(self, J, k, d, base_kernels, Ws, bs, activation=None,
-                 active_dims=None, learn_proj=False, weighted=False):
+                 active_dims=None, learn_proj=False, weighted=False, multiplicative=False):
         """
 
         :param J: Number of independent subkernels
@@ -58,6 +147,7 @@ class ProjectionKernel(gpytorch.kernels.Kernel):
         self.J = J
         self.k = k
         self.weighted = weighted
+        self.multiplicative = multiplicative
         self.last_x1 = None
         self.cached_projections = None
 
@@ -124,7 +214,10 @@ class ProjectionKernel(gpytorch.kernels.Kernel):
             # Multiply each kernel by constant 1/J
             base_kernels.append(ConstantMulLazyTensor(k, 1/self.J))
         # Sum lazy tensor for efficient computations...
-        res = SumLazyTensor(*base_kernels)
+        if self.multiplicative:
+            res = MulLazyTensor(*base_kernels)
+        else:
+            res = SumLazyTensor(*base_kernels)
 
         return res
 

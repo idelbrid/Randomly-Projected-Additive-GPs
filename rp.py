@@ -112,6 +112,40 @@ def ELM(X, K, dist='gaussian', activation='sigmoid'):
     return fn(A, b, X), A, b
 
 
+def space_equally(P, lr, niter):
+    P.requires_grad = True
+    n, d = P.shape
+
+    def loss(P):
+        ones = torch.ones(n).unsqueeze(0)
+        otherones = torch.ones(d).unsqueeze(0)
+        norms = torch.sqrt(torch.pow(P, 2).matmul(otherones.t()))  # should be n x 1
+        norm_products = norms.matmul(norms.t())  # matrix of norm products
+        outer = P.matmul(P.t())  # matrix of dot products
+        cosine = torch.div(outer, norm_products)  # matrix of cos(angle) between vectors
+        cosine = cosine - torch.eye(n)
+        # angle = torch.acos(cosine)
+        square = torch.pow(cosine, 4)  # square it to make it sign invariant and differentiable
+        summation = ones.matmul(square).matmul(ones.t()) # sum all entries
+        cost = summation
+        return summation, cost
+
+    for i in range(niter):
+        summation, cost = loss(P)
+        # if i % 100 == 0:
+        #     print(i, summation)
+        cost.backward()
+        P.data.sub_(lr*P.grad.data)
+        P.grad.zero_()
+    summation, cost = loss(P)
+
+    otherones = torch.ones(d).unsqueeze(0)
+    norms = torch.sqrt(torch.pow(P, 2).matmul(otherones.t()))  # should be n x 1
+    P.data.div_(norms.data)
+    P.requires_grad = False
+    return P, summation
+
+
 if __name__ == '__main__':
     # Basically normal RP
     n = 100

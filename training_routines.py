@@ -35,6 +35,7 @@ def _save_state_dict(model):
     torch.save(d, 'models/' + fname)
     return fname
 
+
 # TODO: Refactor by wrapping kernel "kinds" such as RP kernel, additive kernel etc. in a class and use inheritance...
 def create_rp_kernel(d, k, J, ard=False, activation=None, ski=False,
                      grid_size=None, learn_proj=False, weighted=False, kernel_type='RBF'):
