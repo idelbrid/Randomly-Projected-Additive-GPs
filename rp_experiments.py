@@ -11,7 +11,6 @@ import json
 import gpytorch
 
 from gp_helpers import mean_squared_error
-from training_routines import train_SE_gp, train_additive_rp_gp, train_svi_gp
 
 
 def old_load_dataset(name: str):
@@ -65,6 +64,45 @@ def format_timedelta(delta):
     return '{}d {}h {}m {}s'.format(d, h, m, s)
 
 
+def _determine_folds(split, dataset):
+    """Determine the indices where folds begin and end."""
+    n_per_fold = int(np.floor(len(dataset) * split))
+    n_folds = int(round(1 / split))
+    remaining = len(dataset) - n_per_fold * n_folds
+    fold_starts = [0]
+    for i in range(n_folds):
+        if i < remaining:
+            fold_starts.append(fold_starts[i] + n_per_fold + 1)
+        else:
+            fold_starts.append(fold_starts[i] + n_per_fold)
+    return fold_starts
+
+
+def _access_fold(dataset, fold_starts, fold):
+    """Pull out the test and train set of a dataset using existing fold division"""
+    train = dataset.iloc[0:fold_starts[fold]]  # if fold=0, none before fold
+    test = dataset.iloc[fold_starts[fold]:fold_starts[fold + 1]]
+    train = pd.concat([train, dataset.iloc[fold_starts[fold + 1]:]])
+    return train, test
+
+
+def _normalize_by_train(train, test):
+    """Mean and std normalize using mean and std of the train set."""
+    cols = list(train.columns)
+    features = [x for x in cols if (x != 'target' and x.lower() != 'index')]
+    mu = train[features + ['target']].mean()
+
+    train.loc[:, features + ['target']] -= mu
+    test.loc[:, features + ['target']] -= mu
+    for f in features + ['target']:
+        print(f)
+        sigma = train[f].std()
+        if sigma > 0:
+            train.loc[:, f] /= sigma
+            test.loc[:, f] /= sigma
+    return train, test
+
+
 def run_experiment(training_routine: Callable,
                    training_options: Dict,
                    dataset: Union[str, pd.DataFrame],
@@ -107,28 +145,17 @@ def run_experiment(training_routine: Callable,
     cols = list(dataset.columns)
     features = [x for x in cols if (x != 'target' and x.lower() != 'index')]
 
-    n_per_fold = int(np.ceil(len(dataset)*split))
-    n_folds = int(round(1/split))
+    fold_starts = _determine_folds(split, dataset)
+    n_folds = len(fold_starts) - 1
 
     results_list = []
     t0 = time.time()
     for fold in range(n_folds):
         if not cv and fold > 0:  # only do one fold if you're not doing CV
             break
-        train = dataset.iloc[:n_per_fold*fold]  # if fold=0, none before fold
-        test = dataset.iloc[n_per_fold*fold:n_per_fold*(fold+1)]
-        train = pd.concat([train,
-                           dataset.iloc[n_per_fold*(fold+1):]])
+        train, test = _access_fold(dataset, fold_starts, fold)
         if normalize_using_train:
-            mu = train[features + ['target']].mean()
-
-            train[features + ['target']] -= mu
-            test[features + ['target']] -= mu
-            for f in features + ['target']:
-                sigma = train[f].std()
-                if sigma > 0:
-                    train.loc[:, f] /= sigma
-                    test.loc[:, f] /= sigma
+            train, test = _normalize_by_train(train, test)
         succeed = False
         n_errors = 0
         while not succeed and n_errors < error_repeats:
@@ -295,10 +322,11 @@ def rp_compare_ablation(filename, se_options, rp_options, fit=True,
 
 
 if __name__ == '__main__':
-    def run():
-       with gpytorch.settings.fast_pred_var(True):
-            run_experiment(train_additive_rp_gp, dict(verbose=False, ard=False, activation=None,
-                                                      optimizer='adam', n_epochs=100, lr=0.1, patience=20, k=1, J=1,
-                                                      smooth=True, noise_prior=True, ski=True, grid_ratio=1.0),
-                           'sml', 0.1, cv=False)
+    pass
+    # def run():
+    #    with gpytorch.settings.fast_pred_var(True):
+    #         run_experiment(train_additive_rp_gp, dict(verbose=False, ard=False, activation=None,
+    #                                                   optimizer='adam', n_epochs=100, lr=0.1, patience=20, k=1, J=1,
+    #                                                   smooth=True, noise_prior=True, ski=True, grid_ratio=1.0),
+    #                        'sml', 0.1, cv=False)
 

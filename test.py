@@ -1,10 +1,11 @@
 from unittest import TestCase
-from gp_helpers import ProjectionKernel, PolynomialProjectionKernel, ExactGPModel, train_to_convergence
-from rp import gen_rp
-from rp_experiments import load_dataset
+from gp_helpers import ProjectionKernel, PolynomialProjectionKernel, ExactGPModel
+from rp import gen_rp, space_equally
+from rp_experiments import load_dataset, _normalize_by_train, _access_fold, _determine_folds
 import torch
 import gpytorch
 import numpy as np
+import pandas as pd
 
 
 fake_data = 10+torch.randn(100, 100)*30   # 100 features, 100 points
@@ -350,3 +351,77 @@ class TestPolyProjectionKernel(TestCase):
         self.assertNotEqual(kernel.W[0, 0].item(), old_val)
         self.assertNotAlmostEqual(kernel.W[0, 1].item(), 0)
 
+
+class TestSpaceEqually(TestCase):
+    def test_d2J2(self):
+        d = 2
+        k = 1
+        J = 2
+        P = torch.tensor([[0.0, 1.0], [1.0, 0.0]])
+        newP, _ = space_equally(P, 1.0, 10)
+        self.assertListEqual(newP.numpy().tolist(), P.numpy().tolist())
+
+        P = torch.tensor([[1/np.sqrt(2), 1/np.sqrt(2)], [1.0, 0.0]])
+        newP, loss = space_equally(P, 0.1, 10000)
+        self.assertAlmostEqual(loss.item(), 0)
+
+    def testd4J2(self):
+        d = 4
+        k = 1
+        J = 2
+        P = torch.cat([gen_rp(d, k, dist='gaussian') for _ in range(J)],
+                      dim=1).t()
+        newP, loss = space_equally(P, 0.1, 10000)
+        self.assertAlmostEqual(loss.item(), 0)
+
+    def testd2J4(self):
+        d = 2
+        k = 1
+        J = 4
+        P = torch.cat([gen_rp(d, k, dist='gaussian') for _ in range(J)],
+                      dim=1).t()
+        newP, loss = space_equally(P, 0.1, 10000)
+        self.assertNotAlmostEqual(loss.item(), 0)
+
+
+
+
+
+
+
+class TestExperimentHelpers(TestCase):
+    def testNormalizeByTrain(self):
+        df = pd.DataFrame({'index': [0, 1, 2],
+                           '0': [1, 2, 2],
+                            'target': [0, 0, 1]})
+        train = df.iloc[:2, :]
+        test = df.iloc[2:, :]
+
+        new_train, new_test = _normalize_by_train(train, test)
+        mean = 0.5
+        std = np.std([-0.5, 0.5], ddof=1)  # to match pandas.
+        self.assertEqual(new_train['0'].iloc[0], (0 - mean)/ std)
+        self.assertEqual(new_test['0'].iloc[0], (0 + mean) / std)
+        self.assertEqual(new_test['target'].iloc[0], 1)
+        self.assertEqual(new_train['target'].iloc[0], 0)
+
+    def testDetermineFold(self):
+        df = pd.DataFrame({'index': [0, 1, 2, 3],
+                           '0': [1, 2, 2, 4],
+                           'target': [0, 0, 1, 1]})
+        fold_starts = _determine_folds(1/3, df)  # want 3 folds
+        self.assertEqual(len(fold_starts), 4)
+        self.assertListEqual(fold_starts, [0, 2, 3, 4])
+
+    def testAccessFold(self):
+        df = pd.DataFrame({'index': [0, 1, 2, 3],
+                           '0': [1, 2, 2, 4],
+                           'target': [0, 0, 1, 1]})
+        fold_starts = [0, 2, 3, 4]
+        train, test = _access_fold(df, fold_starts, 0)
+        self.assertListEqual(test['index'].values.tolist(), [0,1])
+        self.assertListEqual(train['index'].values.tolist(), [2, 3])
+
+        train, test = _access_fold(df, fold_starts, 1)
+        self.assertListEqual(test['index'].values.tolist(), [2])
+        self.assertListEqual(train['index'].values.tolist(), [0, 1, 3])
