@@ -8,27 +8,44 @@ from gpytorch.lazy import SumLazyTensor, ConstantMulLazyTensor, lazify, MulLazyT
 from typing import Optional, Type
 import numpy as np
 import logging
+import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
 
 
 class DNN(torch.nn.Module):
     """Note: linear output"""
-    def __init__(self, input_dim, output_dim, hidden_layer_sizes):
+    def __init__(self, input_dim, output_dim, hidden_layer_sizes, nonlinearity='relu'):
             super(DNN, self).__init__()
             self.input_dim = input_dim
             self.output_dim = output_dim
             self.hidden_layer_sizes = hidden_layer_sizes
+            self.nonlinearity = nonlinearity
+            if nonlinearity == 'sigmoid':
+                self._nonlinearity = F.sigmoid
+            elif nonlinearity == 'relu':
+                self._nonlinearity = F.relu_
+            elif nonlinearity == 'tanh':
+                self._nonlinearity = F.tanh
+            elif nonlinearity == 'leakyrelu':
+                self._nonlinearity = F.leaky_relu_
+            else:
+                raise ValueError("Unknown nonlinearity")
+
             linear_modules = []
             layer_sizes = [input_dim]+hidden_layer_sizes + [output_dim]
             for i in range(1, len(layer_sizes)):
                 linear_modules.append(
-                    torch.nn.Linear(layer_sizes[i-1], layer_sizes[i])
+                    nn.Linear(layer_sizes[i-1], layer_sizes[i], bias=False)
                 )
+
             self.layers = torch.nn.ModuleList(linear_modules)
+            for layer in self.layers[:-1]:
+                nn.init.kaiming_uniform_(layer.weight.data, nonlinearity=nonlinearity)
+            nn.init.kaiming_uniform_(self.layers[-1].weight.data, nonlinearity='linear')
 
     def forward(self, x):
         for i in range(len(self.layers)-1):
-            x = F.sigmoid(self.layers[i](x))
+            x = self._nonlinearity(self.layers[i](x))
         x = self.layers[-1](x)  # final layer is linear
         return x
 
