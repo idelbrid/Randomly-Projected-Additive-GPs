@@ -13,6 +13,7 @@ from gp_helpers import SVGPRegressionModel
 import torch
 from sklearn.decomposition import PCA
 import warnings
+import copy
 
 
 def _map_to_optim(optimizer):
@@ -218,11 +219,7 @@ def create_full_kernel(d, ard=False, ski=False, grid_size=None, kernel_type='RBF
     return kernel
 
 
-def create_svi_gp(trainX, kind, k, J, ard, activation, noise_prior, ski,
-                  grid_ratio, grid_size, learn_proj=False,
-                  additive=False, weighted=False, kernel_type='RBF',
-                  space_proj=False,
-                  projection_architecture=None, projection_kwargs=None):
+def create_svi_gp(trainX, kind, **kwargs):
     """Create a SVGP model with a specified kernel.
     rp: if True, use a random projection kernel
     k: dimension of the projections (ignored if rp is False)
@@ -236,30 +233,29 @@ def create_svi_gp(trainX, kind, k, J, ard, activation, noise_prior, ski,
     weighted: if True, learn the linear combination of sub-kernels (if applicable)
     """
     # TODO: lift to work with PCA, PCA rp, and importantly RP poly and deep rp
-    if space_proj:
+    if 'space_proj' in kwargs.keys():
         raise NotImplementedError("SVI GP is not yet implemented with Poly projection kernel and therefore doesn't support equally spaced projections yet.")
-    if ski:
+    if 'ski' in kwargs.keys():
         raise NotImplementedError("SVI with KISS-GP not implemented")
     if kind == 'deep_rp_poly':
         raise NotImplementedError("SVI with deep projections isn't supported yet.")
     [n, d] = trainX.shape
 
     # regular Gaussian likelihood for regression problem
-    if noise_prior:
+    if kwargs.pop('noise_prior'):
         noise_prior_ = gpytorch.priors.SmoothedBoxPrior(1e-4, 10, sigma=0.01)
     else:
         noise_prior_ = None
 
     likelihood = gpytorch.likelihoods.GaussianLikelihood(
         noise_prior=noise_prior_)
-
+    grid_size = kwargs.pop('grid_size')
     if kind == 'rp':
-        kernel = create_rp_kernel(d, k, J, ard, activation, ski=False,
-                                  learn_proj=learn_proj, weighted=weighted, kernel_type=kernel_type)
+        kernel = create_rp_kernel(d, **kwargs)
     elif kind == 'additive':
-        kernel = create_additive_kernel(d, ski=False, weighted=weighted, kernel_type=kernel_type)
+        kernel = create_additive_kernel(d, ski=False, **kwargs)
     elif kind == 'full':
-        kernel = create_full_kernel(d, ard, ski=False, kernel_type=kernel_type)
+        kernel = create_full_kernel(d, ski=False, **kwargs)
     else:
         raise NotImplementedError("Unknown kernel structure kind {}".format(kind))
     kernel = ScaleKernel(kernel)
@@ -273,35 +269,22 @@ def create_svi_gp(trainX, kind, k, J, ard, activation, noise_prior, ski,
     return model, likelihood
 
 
-def train_svi_gp(trainX, trainY, testX, testY, kind, k=None, J=None, ard=False,
-                 activation=None, optimizer='adam', n_epochs=100, lr=0.1,
-                 verbose=False, patience=10, smooth=True, noise_prior=False,
-                 ski=False, grid_ratio=1, grid_size=None, batch_size=64,
-                 learn_proj=False, additive=False, weighted=False, kernel_type='RBF', space_proj=False,
-                 projection_architecture=None, projection_kwargs=None, **train_kwargs):
+def train_svi_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwargs):
     """Create and train a SVGP with the given parameters."""
 
-    model, likelihood = create_svi_gp(trainX, kind, k, J, ard, activation,
-                                      noise_prior, ski, grid_ratio, grid_size,
-                                      learn_proj=learn_proj,
-                                      additive=additive, weighted=weighted, kernel_type=kernel_type,
-                                      space_proj=space_proj,
-                                      projection_architecture=projection_architecture,
-                                      projection_kwargs=projection_kwargs)
+    model, likelihood = create_svi_gp(trainX, kind, **model_kwargs)
     mll = VariationalELBO(likelihood, model, trainY.size(0), combine_terms=False)
 
     def nmll(*args):
         log_lik, kl_div, log_prior = mll(*args)
         return -(log_lik - kl_div + log_prior)
 
-    optimizer_ = _map_to_optim(optimizer)
+    optimizer_ = _map_to_optim(train_kwargs.pop('optimizer'))
 
     likelihood.train()
     model.train()
-    trained_epochs = train_to_convergence(model, trainX, trainY, lr=lr, objective=nmll,
-                         max_iter=n_epochs, verbose=verbose, patience=patience,
-                         smooth=smooth, isloss=True, batch_size=batch_size,
-                         optimizer=optimizer_, **train_kwargs)
+    trained_epochs = train_to_convergence(model, trainX, trainY, objective=nmll,
+                                          optimizer=optimizer_, **train_kwargs)
     model.eval()
     likelihood.eval()
     mll.eval()
@@ -333,9 +316,7 @@ def train_svi_gp(trainX, trainY, testX, testY, kind, k=None, J=None, ard=False,
     #     pass
 
 
-def create_exact_gp(trainX, trainY, kind, k, J, ard, activation, noise_prior, ski,
-                    grid_ratio, grid_size, learn_proj=False, weighted=False, kernel_type='RBF',
-                    space_proj=False, projection_architecture=None, projection_kwargs=None):
+def create_exact_gp(trainX, trainY, kind, **kwargs):
     """Create an exact GP model with a specified kernel.
         rp: if True, use a random projection kernel
         k: dimension of the projections (ignored if rp is False)
@@ -354,55 +335,50 @@ def create_exact_gp(trainX, trainY, kind, k, J, ard, activation, noise_prior, sk
         raise ValueError("Unknown kernel structure type {}".format(kind))
 
     # regular Gaussian likelihood for regression problem
-    if noise_prior:
+    if kwargs.pop('noise_prior'):
         noise_prior_ = gpytorch.priors.SmoothedBoxPrior(1e-4, 10, sigma=0.01)
     else:
         noise_prior_ = None
 
-    likelihood = gpytorch.likelihoods.GaussianLikelihood(
-        noise_prior=noise_prior_)
+    likelihood = gpytorch.likelihoods.GaussianLikelihood(noise_prior=noise_prior_)
+    grid_size = kwargs.pop('grid_size', None)
+    grid_ratio = kwargs.pop('grid_ratio', None)
     if kind == 'full':
         if grid_size is None:
             grid_size = int(grid_ratio * math.pow(n, 1 / d))
-        kernel = create_full_kernel(d, ard, ski, grid_size, kernel_type=kernel_type)
+        kernel = create_full_kernel(d, grid_size=grid_size, **kwargs)
     elif kind == 'additive':
         if grid_size is None:
             grid_size = int(grid_ratio * math.pow(n, 1))
-        kernel = create_additive_kernel(d, ski=ski, grid_size=grid_size, weighted=weighted, kernel_type=kernel_type)
+        kernel = create_additive_kernel(d, grid_size=grid_size, **kwargs)
     elif kind == 'pca':
         # TODO: modify to work with PCA
         if grid_size is None:
             grid_size = int(grid_ratio * math.pow(n, 1))
-        kernel = create_pca_kernel(trainX, random_projections=False, k=1, ski=ski, grid_size=grid_size,
-                                   weighted=weighted, kernel_type=kernel_type)
+        kernel = create_pca_kernel(trainX,grid_size=grid_size,
+                                   random_projections=False, k=1,
+                                   **kwargs)
     elif kind == 'rp':
         if grid_size is None:
-            grid_size = int(grid_ratio * math.pow(n, 1 / k))
-        kernel = create_rp_kernel(d, k, J, ard, activation, ski, grid_size,
-                                  learn_proj=learn_proj, weighted=weighted, kernel_type=kernel_type)
+            grid_size = int(grid_ratio * math.pow(n, 1 / kwargs['k']))
+        kernel = create_rp_kernel(d, grid_size=grid_size, **kwargs)
     elif kind == 'rp_poly':
         # TODO: check this
-        if ski and grid_size is None:
+        if kwargs['ski'] and grid_size is None:
             raise ValueError("I'm pretty sure this is wrong but haven't fixed it yet")
             grid_size = int(grid_ratio * math.pow(n, 1 / k))
-        kernel = create_rp_poly_kernel(d, k, J, activation, ski, grid_size,
-                                       learn_proj=learn_proj, weighted=weighted, kernel_type=kernel_type,
-                                       space_proj=space_proj)
+        kernel = create_rp_poly_kernel(d, **kwargs)
     elif kind == 'deep_rp_poly':
-        if ski and grid_size is None:
+        if kwargs['ski'] and grid_size is None:
             raise ValueError("I'm pretty sure this is wrong but haven't fixed it yet")
             grid_size = int(grid_ratio * math.pow(n, 1 / k))
-        kernel = create_deep_rp_poly_kernel(d, k, J, projection_architecture,
-                                            projection_kwargs, ski=ski, grid_size=grid_size,
-                                            learn_proj=learn_proj, weighted=weighted,
-                                            kernel_type=kernel_type)
+        kernel = create_deep_rp_poly_kernel(d, **kwargs)
     elif kind == 'pca_rp':
         # TODO: modify to work with PCA RP
         raise NotImplementedError("Apparently not working with PCA RP??")
         if grid_size is None:
             grid_size = int(grid_ratio * math.pow(n, 1 / k))
-        kernel = create_pca_kernel(trainX, random_projections=True, k=k, J=J, ski=ski, grid_size=grid_size,
-                                   weighted=weighted, kernel_type=kernel_type)
+        kernel = create_pca_kernel(trainX, **kwargs)
     else:
         raise ValueError()
 
@@ -410,35 +386,24 @@ def create_exact_gp(trainX, trainY, kind, k, J, ard, activation, noise_prior, sk
     model = ExactGPModel(trainX, trainY, likelihood, kernel)
     return model, likelihood
 
+
+# TODO: raise a warning if somewhat important options are missing.
 # TODO: change the key word arguments to model options and rename train_kwargs to train options. This applies to basically all of the functions here.
-def train_exact_gp(trainX, trainY, testX, testY, kind, k=None, J=None, ard=False,
-                   activation=None, optimizer='lbfgs', n_epochs=100, lr=0.1,
-                   verbose=False, patience=20, smooth=True, noise_prior=False,
-                   ski=False, grid_ratio=1, grid_size=None, learn_proj=False,
-                   space_proj=False,
-                   weighted=False, kernel_type='RBF',
-                   projection_architecture=None, projection_kwargs=None,
-                   **train_kwargs):
+def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwargs):
     """Create and train an exact GP with the given options"""
-    model, likelihood = create_exact_gp(trainX, trainY, kind, k, J, ard,
-                                        activation, noise_prior, ski,
-                                        grid_ratio, grid_size,
-                                        learn_proj=learn_proj,
-                                        weighted=weighted, kernel_type=kernel_type,
-                                        space_proj=space_proj,
-                                        projection_architecture=projection_architecture,
-                                        projection_kwargs=projection_kwargs)
+    model_kwargs = copy.copy(model_kwargs)
+    train_kwargs = copy.copy(train_kwargs)
+
+    model, likelihood = create_exact_gp(trainX, trainY, kind, **model_kwargs)
 
     # regular marginal log likelihood
     mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
 
-    optimizer_ = _map_to_optim(optimizer)
+    optimizer_ = _map_to_optim(train_kwargs.pop('optimizer'))
 
     # fit GP
     trained_epochs = train_to_convergence(model, trainX, trainY, optimizer=optimizer_,
-                         isloss=False, lr=lr, max_iter=n_epochs,
-                         verbose=verbose, objective=mll, patience=patience,
-                         smooth=smooth, **train_kwargs)
+                         objective=mll, isloss=False, **train_kwargs)
     model.eval()
     likelihood.eval()
     mll.eval()
