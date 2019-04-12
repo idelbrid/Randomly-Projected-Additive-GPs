@@ -11,6 +11,7 @@ import json
 import gpytorch
 
 from gp_helpers import mean_squared_error
+import training_routines
 
 
 def old_load_dataset(name: str):
@@ -250,78 +251,43 @@ def run_experiment_suite(datasets,
     return df
 
 
-def rp_compare_ablation(filename, se_options, rp_options, fit=True,
-                        dsets=get_small_datasets()+get_medium_datasets(),
-                        optimizer='lbfgs', include_se=True, repeats=1):
+def rp_compare_ablation(filename, datasets, rp_options, repeats=1, max_j=300):
     df = pd.DataFrame()
 
-    if fit:
-        epochs = 1000
-        fname = './fitted_scaled_rp_compare_ablation_results.csv'
-    else:
-        epochs = 0
-        fname = './unfitted_scaled_rp_compare_ablation_results.csv'
-    if filename is not None:
-        fname = filename
-
-    se_options['k'] = 0
-    se_options['J'] = 0
-
-
-    for dataset in dsets:
+    for dataset in datasets:
         print(dataset, 'starting')
-
-        if include_se:
-            # regular SE kernel
-            options_json = json.dumps(se_options)
-            try:
-
-                result = run_experiment(train_SE_gp, se_options, dataset=dataset,
-                                        split=0.1, cv=True, repeats=repeats)
-                result['RP'] = False
-                result['dataset'] = dataset
-                result['options'] = options_json
-            except Exception:
-                result = dict()
-                result['RP'] = False
-                result['dataset'] = dataset
-                result['error'] = traceback.format_exc()
-                result['options'] = options_json
-                print(result)
-                result = pd.DataFrame([result])
+        J_2 = 0
+        J_1 = 1
+        J = J_1 + J_2
+        while J_1 + J_2 < max_j:
+            J = J_1 + J_2
+            J_2 = J_1
+            J_1 = J
+            print("J=", J)
+            rp_options['model_kwargs']['J'] = J
+            options_json = json.dumps(rp_options)
+            with gpytorch.settings.cg_tolerance(0.01):
+                result = run_experiment(training_routines.train_exact_gp, rp_options,
+                        dataset=dataset, split=0.1, cv=True,
+                        repeats=repeats, normalize_using_train=True)
+            result['RP'] = True
+            result['k'] = rp_options['model_kwargs']['k']
+            result['J'] = rp_options['model_kwargs']['J']
+            result['dataset'] = dataset
+            result['options'] = options_json            
             df = pd.concat([df, result])
-            df.to_csv(fname)
-
-        for k in [1, 4, 10]:
-            for J in [1, 2, 3, 5, 8, 13, 20]:
-                rp_options['k'] = k
-                rp_options['J'] = J
-                options_json = json.dumps(rp_options)
-                try:
-                    result = run_experiment(train_additive_rp_gp, rp_options,
-                                            dataset=dataset, split=0.1, cv=True,
-                                            repeats=repeats)
-                    result['RP'] = True
-                    result['k'] = k
-                    result['J'] = J
-                    result['dataset'] = dataset
-                    result['options'] = options_json
-                except Exception:
-                    result = dict()
-                    result['RP'] = True
-                    result['k'] = k
-                    result['J'] = J
-                    result['dataset'] = dataset
-                    result['error'] = traceback.format_exc()
-                    result['options'] = options_json
-                    print(result)
-                    result = pd.DataFrame([result])
-                df = pd.concat([df, result])
-                df.to_csv(fname)
+            df.to_csv(filename)
 
 
 if __name__ == '__main__':
-    pass
+    options = dict(kind='rp_poly', 
+                   model_kwargs=dict(k=1, J=1, noise_prior=True, kernel_type='RBF', learn_proj=False, weighted=True, space_proj=False),
+                   train_kwargs=dict(verbose=False, optimizer='adam', max_iter=1000, lr=0.1, patience=20, smooth=True))
+    datasets = get_small_datasets() + get_medium_datasets()
+    datasets = datasets[:18]  # thru wine
+    rp_compare_ablation('4-12_big_k=1_rp_ablation.csv', datasets, options, repeats=2, max_j=300)
+    
+
     # def run():
     #    with gpytorch.settings.fast_pred_var(True):
     #         run_experiment(train_additive_rp_gp, dict(verbose=False, ard=False, activation=None,

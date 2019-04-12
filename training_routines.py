@@ -343,33 +343,34 @@ def create_exact_gp(trainX, trainY, kind, **kwargs):
     likelihood = gpytorch.likelihoods.GaussianLikelihood(noise_prior=noise_prior_)
     grid_size = kwargs.pop('grid_size', None)
     grid_ratio = kwargs.pop('grid_ratio', None)
+    ski = kwargs.get('ski', False)
     if kind == 'full':
-        if grid_size is None:
+        if ski and grid_size is None:
             grid_size = int(grid_ratio * math.pow(n, 1 / d))
         kernel = create_full_kernel(d, grid_size=grid_size, **kwargs)
     elif kind == 'additive':
-        if grid_size is None:
+        if ski and grid_size is None:
             grid_size = int(grid_ratio * math.pow(n, 1))
         kernel = create_additive_kernel(d, grid_size=grid_size, **kwargs)
     elif kind == 'pca':
         # TODO: modify to work with PCA
-        if grid_size is None:
+        if ski and grid_size is None:
             grid_size = int(grid_ratio * math.pow(n, 1))
         kernel = create_pca_kernel(trainX,grid_size=grid_size,
                                    random_projections=False, k=1,
                                    **kwargs)
     elif kind == 'rp':
-        if grid_size is None:
+        if ski and grid_size is None:
             grid_size = int(grid_ratio * math.pow(n, 1 / kwargs['k']))
         kernel = create_rp_kernel(d, grid_size=grid_size, **kwargs)
     elif kind == 'rp_poly':
         # TODO: check this
-        if kwargs['ski'] and grid_size is None:
+        if ski and grid_size is None:
             raise ValueError("I'm pretty sure this is wrong but haven't fixed it yet")
             grid_size = int(grid_ratio * math.pow(n, 1 / k))
         kernel = create_rp_poly_kernel(d, **kwargs)
     elif kind == 'deep_rp_poly':
-        if kwargs['ski'] and grid_size is None:
+        if ski and grid_size is None:
             raise ValueError("I'm pretty sure this is wrong but haven't fixed it yet")
             grid_size = int(grid_ratio * math.pow(n, 1 / k))
         kernel = create_deep_rp_poly_kernel(d, **kwargs)
