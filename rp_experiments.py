@@ -95,7 +95,6 @@ def _normalize_by_train(train, test):
     train.loc[:, features + ['target']] -= mu
     test.loc[:, features + ['target']] -= mu
     for f in features + ['target']:
-        print(f)
         sigma = train[f].std()
         if sigma > 0:
             train.loc[:, f] /= sigma
