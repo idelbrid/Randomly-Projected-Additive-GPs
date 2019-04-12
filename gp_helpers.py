@@ -19,7 +19,7 @@ class DNN(torch.nn.Module):
             self.output_dim = output_dim
             self.hidden_layer_sizes = hidden_layer_sizes
             linear_modules = []
-            layer_sizes = [input_dim, hidden_layer_sizes, hidden_layer_sizes]
+            layer_sizes = [input_dim]+hidden_layer_sizes + [output_dim]
             for i in range(1, len(layer_sizes)):
                 linear_modules.append(
                     torch.nn.Linear(layer_sizes[i-1], layer_sizes[i])

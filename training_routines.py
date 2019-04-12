@@ -350,7 +350,7 @@ def create_exact_gp(trainX, trainY, kind, k, J, ard, activation, noise_prior, sk
         additive: if True, (and not RP) use an additive kernel instead of RP or RBF
         """
     [n, d] = trainX.shape
-    if kind not in ['full', 'rp', 'additive', 'pca', 'pca_rp', 'rp_poly']:
+    if kind not in ['full', 'rp', 'additive', 'pca', 'pca_rp', 'rp_poly', 'deep_rp_poly']:
         raise ValueError("Unknown kernel structure type {}".format(kind))
 
     # regular Gaussian likelihood for regression problem
@@ -382,14 +382,14 @@ def create_exact_gp(trainX, trainY, kind, k, J, ard, activation, noise_prior, sk
                                   learn_proj=learn_proj, weighted=weighted, kernel_type=kernel_type)
     elif kind == 'rp_poly':
         # TODO: check this
-        if grid_size is None:
+        if ski and grid_size is None:
             raise ValueError("I'm pretty sure this is wrong but haven't fixed it yet")
             grid_size = int(grid_ratio * math.pow(n, 1 / k))
         kernel = create_rp_poly_kernel(d, k, J, activation, ski, grid_size,
                                        learn_proj=learn_proj, weighted=weighted, kernel_type=kernel_type,
                                        space_proj=space_proj)
     elif kind == 'deep_rp_poly':
-        if grid_size is None:
+        if ski and grid_size is None:
             raise ValueError("I'm pretty sure this is wrong but haven't fixed it yet")
             grid_size = int(grid_ratio * math.pow(n, 1 / k))
         kernel = create_deep_rp_poly_kernel(d, k, J, projection_architecture,
