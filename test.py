@@ -1,8 +1,9 @@
 from unittest import TestCase
-from gp_helpers import ProjectionKernel, PolynomialProjectionKernel, ExactGPModel
+from gp_helpers import ProjectionKernel, PolynomialProjectionKernel, ExactGPModel, GeneralizedPolynomialProjectionKernel
 from rp import gen_rp, space_equally
 from rp_experiments import load_dataset, _normalize_by_train, _access_fold, _determine_folds
 import torch
+import torch.nn.functional as F
 import gpytorch
 import numpy as np
 import pandas as pd
@@ -14,6 +15,19 @@ fake_target = torch.sin(fake_data[:, 0]) + torch.cos(fake_data[:, 1])
 real_data = torch.Tensor(load_dataset('breastcancer').iloc[:, 1:-1].values)
 real_n, real_d = real_data.shape
 real_target = torch.Tensor(load_dataset('breastcancer').iloc[:, -1].values)
+
+
+class TwoLayerNN(torch.nn.Module):
+    """Note: linear output"""
+    def __init__(self, input_dim, hidden_units, output_dim):
+        super(TwoLayerNN, self).__init__()
+        self.fc1 = torch.nn.Linear(input_dim, hidden_units)
+        self.fc2 = torch.nn.Linear(hidden_units, output_dim)
+
+    def forward(self, x):
+        x = F.sigmoid(self.fc1(x))
+        x = self.fc2(x)
+        return x
 
 
 def pairwise_distance(x1, x2):
@@ -191,15 +205,16 @@ class TestPolyProjectionKernel(TestCase):
         param_dict = dict()
         for name, param in kernel.named_parameters():
             param_dict[name] = param
-        self.assertEqual(len(param_dict), self.J*(self.k + 1))  # lengthscales + mixins
+        self.assertEqual(len(param_dict), self.J*(self.k + 1) + 2)  # lengthscales + mixins
         self.assertEqual(param_dict['kernel.kernels.0.base_kernel.kernels.0.raw_lengthscale'], 0)
         self.assertIn('kernel.kernels.0.base_kernel.kernels.1.raw_lengthscale', param_dict.keys())
         self.assertIn('kernel.kernels.2.base_kernel.kernels.0.raw_lengthscale', param_dict.keys())
         self.assertIn('kernel.kernels.2.raw_outputscale', param_dict.keys())
         self.assertIn('kernel.kernels.0.raw_outputscale', param_dict.keys())
         self.assertFalse(kernel.kernel.kernels[0].raw_outputscale.requires_grad)
-        self.assertNotIn('W', param_dict.keys())
-        self.assertNotIn('b', param_dict.keys())
+        self.assertFalse(kernel.projection_module.weight.requires_grad)
+        self.assertFalse(kernel.projection_module.bias.requires_grad)
+
 
     def test_forward(self):
         kernel = PolynomialProjectionKernel(self.J, self.k, self.d, self.base_kernel, self.Ws, self.bs, activation=None, learn_proj=False, weighted=False)
@@ -232,28 +247,12 @@ class TestPolyProjectionKernel(TestCase):
         self.assertEqual(kernel.last_x1.numel(), real_data[:10].numel())
         self.assertEqual(new.numel(), 100)
 
-    def test_activation(self):
-        kernel = PolynomialProjectionKernel(self.J, self.k, self.d, self.base_kernel, self.Ws, self.bs, activation=None, learn_proj=False, weighted=False)
-        output = kernel(real_data, real_data)
-        K_proj = output.evaluate()
-
-        k1 = gpytorch.kernels.RBFKernel()
-        k2 = gpytorch.kernels.RBFKernel()
-        k3 = gpytorch.kernels.RBFKernel()
-        sig = torch.sigmoid(real_data[:, :2])
-        equivalent = k1(sig[:, 0:1])*k1(sig[:, 1:2]) + k2(sig[:, 0:1])*k2(sig[:, 1:2]) + k3(sig[:, 0:1])*k3(sig[:, 1:2])
-        K_eq = equivalent.evaluate() / 3
-
-        indices = np.random.choice(np.array(real_n), size=10)
-        for i in indices:
-            self.assertAlmostEqual(K_proj[i, 0].detach().numpy(), K_eq[i, 0].detach().numpy(), places=5)
-
     def test_weighted(self):
         kernel = PolynomialProjectionKernel(self.J, self.k, self.d, self.base_kernel, self.Ws, self.bs, activation=None, learn_proj=False, weighted=True)
         param_dict = dict()
         for name, param in kernel.named_parameters():
             param_dict[name] = param
-        self.assertEqual(len(param_dict), self.J*(self.k + 1))  # lengthscales + mixins
+        self.assertEqual(len(param_dict), self.J*(self.k + 1) + 2)  # lengthscales + mixins
         self.assertIn('kernel.kernels.2.raw_outputscale', param_dict.keys())
         self.assertIn('kernel.kernels.0.raw_outputscale', param_dict.keys())
         self.assertTrue(kernel.kernel.kernels[0].raw_outputscale.requires_grad)
@@ -270,20 +269,20 @@ class TestPolyProjectionKernel(TestCase):
         for name, param in kernel.named_parameters():
             param_dict[name] = param
         self.assertEqual(len(param_dict), self.J*(self.k+1) + 2)  # outputscale, lengthscales for each j, plus W, and b.
-        self.assertIn('W', param_dict.keys())
-        self.assertIn('b', param_dict.keys())
+        self.assertTrue(kernel.projection_module.bias.requires_grad)
+        self.assertTrue(kernel.projection_module.weight.requires_grad)
 
     def test_fit(self):
         kernel = PolynomialProjectionKernel(self.J, self.k, self.d,
                                             self.base_kernel, self.Ws, self.bs,
-                                            activation=None, learn_proj=False,
+                                            learn_proj=False,
                                             weighted=False)
         likelihood = gpytorch.likelihoods.GaussianLikelihood()
         model = ExactGPModel(real_data, real_target, likelihood, kernel)
         mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
         self.assertAlmostEqual(kernel.kernel.kernels[0].outputscale.item(), 1/self.J)
-        self.assertAlmostEqual(kernel.W[0, 0], 1)
-        self.assertAlmostEqual(kernel.W[0, 1], 0)
+        self.assertAlmostEqual(kernel.projection_module.weight[0, 0], 1)
+        self.assertAlmostEqual(kernel.projection_module.weight[0, 1], 0)
         model.train()
 
         optimizer_ = torch.optim.Adam(model.parameters(), lr=0.01)
@@ -294,9 +293,8 @@ class TestPolyProjectionKernel(TestCase):
         optimizer_.step()
         self.assertNotEqual(kernel.kernel.kernels[0].base_kernel.kernels[0].raw_lengthscale, 0)
         self.assertAlmostEqual(kernel.kernel.kernels[0].outputscale.item(), 1/self.J)
-        self.assertAlmostEqual(kernel.W[0, 0], 1)
-        self.assertAlmostEqual(kernel.W[0, 1], 0)
-
+        self.assertAlmostEqual(kernel.projection_module.weight[0, 0], 1)
+        self.assertAlmostEqual(kernel.projection_module.weight[0, 1], 0)
 
     def test_fit_weighted(self):
         kernel = PolynomialProjectionKernel(self.J, self.k, self.d,
@@ -309,8 +307,8 @@ class TestPolyProjectionKernel(TestCase):
         self.assertAlmostEqual(kernel.kernel.kernels[0].outputscale.item(),
                                1 / self.J)
         old_value = float(kernel.kernel.kernels[0].outputscale.item())
-        self.assertAlmostEqual(kernel.W[0, 0], 1)
-        self.assertAlmostEqual(kernel.W[0, 1], 0)
+        self.assertAlmostEqual(kernel.projection_module.weight[0, 0], 1)
+        self.assertAlmostEqual(kernel.projection_module.weight[0, 1], 0)
         model.train()
 
         optimizer_ = torch.optim.Adam(model.parameters(), lr=0.01)
@@ -323,8 +321,8 @@ class TestPolyProjectionKernel(TestCase):
             kernel.kernel.kernels[0].base_kernel.kernels[0].raw_lengthscale, 0)
         self.assertNotEqual(kernel.kernel.kernels[0].outputscale.item(),
                             old_value)
-        self.assertAlmostEqual(kernel.W[0, 0], 1)
-        self.assertAlmostEqual(kernel.W[0, 1], 0)
+        self.assertAlmostEqual(kernel.projection_module.weight[0, 0], 1)
+        self.assertAlmostEqual(kernel.projection_module.weight[0, 1], 0)
 
     def test_fit_learn_proj(self):
         kernel = PolynomialProjectionKernel(self.J, self.k, self.d,
@@ -335,9 +333,9 @@ class TestPolyProjectionKernel(TestCase):
         model = ExactGPModel(real_data, real_target, likelihood, kernel)
         mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
         self.assertAlmostEqual(kernel.kernel.kernels[0].outputscale.item(), 1/self.J)
-        self.assertAlmostEqual(kernel.W[0, 0], 1)
-        self.assertAlmostEqual(kernel.W[0, 1], 0)
-        old_val = float(kernel.W[0,0].item())
+        self.assertAlmostEqual(kernel.projection_module.weight[0, 0], 1)
+        self.assertAlmostEqual(kernel.projection_module.weight[0, 1], 0)
+        old_val = float(kernel.projection_module.weight[0,0].item())
         model.train()
 
         optimizer_ = torch.optim.Adam(model.parameters(), lr=0.01)
@@ -348,8 +346,40 @@ class TestPolyProjectionKernel(TestCase):
         optimizer_.step()
         self.assertNotEqual(kernel.kernel.kernels[0].base_kernel.kernels[0].raw_lengthscale, 0)
         self.assertAlmostEqual(kernel.kernel.kernels[0].outputscale.item(), 1/self.J)
-        self.assertNotEqual(kernel.W[0, 0].item(), old_val)
-        self.assertNotAlmostEqual(kernel.W[0, 1].item(), 0)
+        self.assertNotEqual(kernel.projection_module.weight[0, 0].item(), old_val)
+        self.assertNotAlmostEqual(kernel.projection_module.weight[0, 1].item(), 0)
+
+
+class TestGeneralPolyProjKernel(TestCase):
+    def setUp(self):
+        self.k = 2
+        self.d = real_d
+        self.J = 3
+        self.projection = TwoLayerNN(self.d, 10, self.J*self.k)
+        self.base_kernel = gpytorch.kernels.RBFKernel
+
+    def test_init(self):
+        kernel = GeneralizedPolynomialProjectionKernel(
+            self.J, self.k, self.d, self.base_kernel, self.projection,
+            learn_proj=False, weighted=False)
+        param_dict = dict()
+        for name, param in kernel.named_parameters():
+            param_dict[name] = param
+        self.assertEqual(len(param_dict),
+                         self.J * (self.k + 1) + 4)  # lengthscales + mixins + weight/bias + weight/bias
+        self.assertEqual(param_dict[
+                             'kernel.kernels.0.base_kernel.kernels.0.raw_lengthscale'],
+                         0)
+        self.assertIn('kernel.kernels.0.base_kernel.kernels.1.raw_lengthscale',
+                      param_dict.keys())
+        self.assertIn('kernel.kernels.2.base_kernel.kernels.0.raw_lengthscale',
+                      param_dict.keys())
+        self.assertIn('kernel.kernels.2.raw_outputscale', param_dict.keys())
+        self.assertIn('kernel.kernels.0.raw_outputscale', param_dict.keys())
+        self.assertFalse(kernel.kernel.kernels[0].raw_outputscale.requires_grad)
+        self.assertFalse(kernel.projection_module.fc1.weight.requires_grad)
+        self.assertFalse(kernel.projection_module.fc2.weight.requires_grad)
+        self.assertFalse(kernel.projection_module.fc2.bias.requires_grad)
 
 
 class TestSpaceEqually(TestCase):

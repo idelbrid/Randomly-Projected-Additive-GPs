@@ -1,5 +1,6 @@
 import torch
 import gpytorch
+import torch.nn.functional as F
 from gpytorch.models import ExactGP, AbstractVariationalGP
 from gpytorch.variational import CholeskyVariationalDistribution, VariationalStrategy
 # from gpytorch.lazy.zero_lazy_tensor import ZeroLazyTensor
@@ -8,6 +9,28 @@ from typing import Optional, Type
 import numpy as np
 import logging
 from torch.utils.data import TensorDataset, DataLoader
+
+
+class DNN(torch.nn.Module):
+    """Note: linear output"""
+    def __init__(self, input_dim, output_dim, hidden_layer_sizes):
+            super(DNN, self).__init__()
+            self.input_dim = input_dim
+            self.output_dim = output_dim
+            self.hidden_layer_sizes = hidden_layer_sizes
+            linear_modules = []
+            layer_sizes = [input_dim, hidden_layer_sizes, hidden_layer_sizes]
+            for i in range(1, len(layer_sizes)):
+                linear_modules.append(
+                    torch.nn.Linear(layer_sizes[i-1], layer_sizes[i])
+                )
+            self.layers = torch.nn.ModuleList(linear_modules)
+
+    def forward(self, x):
+        for i in range(len(self.layers)-1):
+            x = F.sigmoid(self.layers[i](x))
+        x = self.layers[-1](x)  # final layer is linear
+        return x
 
 
 # TODO: implement mixtures of products via kernel powers (log(K) ~ a log(k1) + b log(k2) -> K ~ k1^a * k2^b
