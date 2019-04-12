@@ -10,28 +10,36 @@ import logging
 from torch.utils.data import TensorDataset, DataLoader
 
 
-class PolynomialProjectionKernel(gpytorch.kernels.Kernel):
-    def __init__(self, J, k, d, base_kernel, Ws, bs, activation=None,
-                 learn_proj=False, weighted=False):
-        super(PolynomialProjectionKernel, self).__init__()
-        if not len(Ws) == J and len(bs) == J:
-            raise Exception()
-        if not Ws[0].shape[0] == d:
-            raise Exception()
-        if not Ws[0].shape[1] == k:
-            raise Exception
+# TODO: implement mixtures of products via kernel powers (log(K) ~ a log(k1) + b log(k2) -> K ~ k1^a * k2^b
+class GeneralizedPolynomialProjectionKernel(gpytorch.kernels.Kernel):
+    def __init__(self, J, k, d, base_kernel, projection_module,
+                 learn_proj=False, weighted=False, **kernel_kwargs):
+        super(GeneralizedPolynomialProjectionKernel, self).__init__()
+        # if not len(Ws) == J and len(bs) == J:
+        #     raise Exception()
+        # if not Ws[0].shape[0] == d:
+        #     raise Exception()
+        # if not Ws[0].shape[1] == k:
+        #     raise ()
 
         self.learn_proj = learn_proj
-
-        # Register parameters for autograd if learn_proj. Othwerise, don't.
-        W = torch.cat(Ws, dim=1)
-        b = torch.cat(bs, dim=0)
-        if self.learn_proj:
-            self.register_parameter('W', torch.nn.Parameter(W))
-            self.register_parameter('b', torch.nn.Parameter(b))
+        self.projection_module = projection_module
+        if not self.learn_proj:
+            for param in self.projection_module.parameters():
+                param.requires_grad = False
         else:
-            self.W = W
-            self.b = b
+            for param in self.projection_module.parameters():
+                param.requires_grad = True
+
+        # # Register parameters for autograd if learn_proj. Othwerise, don't.
+        # W = torch.cat(Ws, dim=1)
+        # b = torch.cat(bs, dim=0)
+        # if self.learn_proj:
+        #     self.register_parameter('W', torch.nn.Parameter(W))
+        #     self.register_parameter('b', torch.nn.Parameter(b))
+        # else:
+        #     self.W = W
+        #     self.b = b
 
         # if self.learn_proj:
         #     for i in range(len(Ws)):
@@ -43,14 +51,11 @@ class PolynomialProjectionKernel(gpytorch.kernels.Kernel):
         #     for i in range(len(Ws)):
         #         self.__setattr__('W_{}'.format(i), Ws[i])
         #         self.__setattr__('b_{}'.format(i), bs[i])
-
-        self.activation = activation
-
         kernels = []
         for i in range(J):
             product_kernels = []
             for j in range(k):
-                product_kernels.append(base_kernel(active_dims=i*k+j))
+                product_kernels.append(base_kernel(active_dims=i*k+j, **kernel_kwargs))
             product_kernel = gpytorch.kernels.ProductKernel(*product_kernels)
             if weighted:
                 product_kernel = gpytorch.kernels.ScaleKernel(product_kernel)
@@ -72,12 +77,7 @@ class PolynomialProjectionKernel(gpytorch.kernels.Kernel):
 
     def _project(self, x):
         """Project matrix x with (multiple) random projections"""
-        projected = x.matmul(self.W)
-        projected = projected + self.b.unsqueeze(0)
-        if self.activation is not None:
-            if self.activation == 'sigmoid':
-                projected = torch.nn.functional.sigmoid(projected)
-        return projected
+        return self.projection_module(x)
 
     def forward(self, x1, x2, **params):
         # Don't cache proj if weights are changing
@@ -97,6 +97,22 @@ class PolynomialProjectionKernel(gpytorch.kernels.Kernel):
         else:
             x2_projections = self._project(x2)
             return self.kernel(x1_projections, x2_projections)
+
+
+class PolynomialProjectionKernel(GeneralizedPolynomialProjectionKernel):
+    def __init__(self, J, k, d, base_kernel, Ws, bs, activation=None,
+                 learn_proj=False, weighted=False, **kernel_kwargs):
+        if activation is not None:
+            raise ValueError("activation not supported through the normal projection interface. Use the GeneralPolynomialProjectionKernel instead.")
+        projection_module = torch.nn.Linear(d, J*k)
+        W = torch.nn.Parameter(torch.cat(Ws, dim=1).t())
+        b = torch.nn.Parameter(torch.cat(bs, dim=0))
+        projection_module.weight = W
+        projection_module.bias = b
+        super(PolynomialProjectionKernel, self
+              ).__init__(J, k, d, base_kernel, projection_module,
+                         learn_proj, weighted, **kernel_kwargs)
+
 
 
 class ProjectionKernel(gpytorch.kernels.Kernel):
