@@ -50,17 +50,10 @@ class DNN(torch.nn.Module):
         return x
 
 
-# TODO: implement mixtures of products via kernel powers (log(K) ~ a log(k1) + b log(k2) -> K ~ k1^a * k2^b
-class GeneralizedPolynomialProjectionKernel(gpytorch.kernels.Kernel):
-    def __init__(self, J, k, d, base_kernel, projection_module,
+class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
+    def __init__(self, component_degrees, d, base_kernel, projection_module,
                  learn_proj=False, weighted=False, **kernel_kwargs):
-        super(GeneralizedPolynomialProjectionKernel, self).__init__()
-        # if not len(Ws) == J and len(bs) == J:
-        #     raise Exception()
-        # if not Ws[0].shape[0] == d:
-        #     raise Exception()
-        # if not Ws[0].shape[1] == k:
-        #     raise ()
+        super(GeneralizedProjectionKernel, self).__init__()
 
         self.learn_proj = learn_proj
         self.projection_module = projection_module
@@ -71,46 +64,28 @@ class GeneralizedPolynomialProjectionKernel(gpytorch.kernels.Kernel):
             for param in self.projection_module.parameters():
                 param.requires_grad = True
 
-        # # Register parameters for autograd if learn_proj. Othwerise, don't.
-        # W = torch.cat(Ws, dim=1)
-        # b = torch.cat(bs, dim=0)
-        # if self.learn_proj:
-        #     self.register_parameter('W', torch.nn.Parameter(W))
-        #     self.register_parameter('b', torch.nn.Parameter(b))
-        # else:
-        #     self.W = W
-        #     self.b = b
-
-        # if self.learn_proj:
-        #     for i in range(len(Ws)):
-        #         self.register_parameter('W_{}'.format(i),
-        #                                 torch.nn.Parameter(Ws[i]))
-        #         self.register_parameter('b_{}'.format(i),
-        #                                 torch.nn.Parameter(bs[i]))
-        # else:
-        #     for i in range(len(Ws)):
-        #         self.__setattr__('W_{}'.format(i), Ws[i])
-        #         self.__setattr__('b_{}'.format(i), bs[i])
         kernels = []
-        for i in range(J):
+        dim_count = 0
+        for i in range(len(component_degrees)):
             product_kernels = []
-            for j in range(k):
-                product_kernels.append(base_kernel(active_dims=i*k+j, **kernel_kwargs))
+            for j in range(component_degrees[i]):
+                product_kernels.append(base_kernel(active_dims=dim_count, **kernel_kwargs))
+                dim_count += 1
             product_kernel = gpytorch.kernels.ProductKernel(*product_kernels)
             if weighted:
                 product_kernel = gpytorch.kernels.ScaleKernel(product_kernel)
-                product_kernel.initialize(outputscale=1/J)
+                product_kernel.initialize(outputscale=1/len(component_degrees))
             else:
                 product_kernel = gpytorch.kernels.ScaleKernel(product_kernel)
-                product_kernel.initialize(outputscale=1 / J)
+                product_kernel.initialize(outputscale=1 / len(component_degrees))
                 product_kernel.raw_outputscale.requires_grad = False
             kernels.append(product_kernel)
         kernel = gpytorch.kernels.AdditiveKernel(*kernels)
 
         self.kernel = kernel
         self.d = d
-        self.J = J
-        self.k = k
+        self.component_degrees = component_degrees
+        self.J = len(component_degrees)
         self.weighted = weighted
         self.last_x1 = None
         self.cached_projections = None
@@ -139,6 +114,17 @@ class GeneralizedPolynomialProjectionKernel(gpytorch.kernels.Kernel):
             return self.kernel(x1_projections, x2_projections)
 
 
+# TODO: make sure this works right
+# TODO: implement mixtures of products via kernel powers (log(K) ~ a log(k1) + b log(k2) -> K ~ k1^a * k2^b
+class GeneralizedPolynomialProjectionKernel(GeneralizedProjectionKernel):
+    def __init__(self, J, k, d, base_kernel, projection_module,
+                 learn_proj=False, weighted=False, **kernel_kwargs):
+        degrees = [k for _ in range(J)]
+        super(GeneralizedPolynomialProjectionKernel, self).__init__(degrees, d, base_kernel, projection_module, learn_proj, weighted, **kernel_kwargs)
+        self.J = J
+        self.k = k
+
+
 class PolynomialProjectionKernel(GeneralizedPolynomialProjectionKernel):
     def __init__(self, J, k, d, base_kernel, Ws, bs, activation=None,
                  learn_proj=False, weighted=False, **kernel_kwargs):
@@ -152,7 +138,6 @@ class PolynomialProjectionKernel(GeneralizedPolynomialProjectionKernel):
         super(PolynomialProjectionKernel, self
               ).__init__(J, k, d, base_kernel, projection_module,
                          learn_proj, weighted, **kernel_kwargs)
-
 
 
 class ProjectionKernel(gpytorch.kernels.Kernel):
