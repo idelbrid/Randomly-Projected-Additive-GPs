@@ -5,7 +5,7 @@ from torch import __init__
 import rp
 from gp_helpers import ExactGPModel, train_to_convergence, ProjectionKernel, \
     LinearRegressionModel, mean_squared_error, PolynomialProjectionKernel, DNN,\
-    GeneralizedPolynomialProjectionKernel
+    GeneralizedPolynomialProjectionKernel, GeneralizedProjectionKernel
 import gpytorch
 from gpytorch.kernels import ScaleKernel, RBFKernel, GridInterpolationKernel
 from gpytorch.mlls import VariationalELBO, VariationalMarginalLogLikelihood
@@ -90,6 +90,24 @@ def create_rp_poly_kernel(d, k, J, activation=None, ski=False, grid_size=None,
 
     return PolynomialProjectionKernel(J, k, d, kernel, projs, bs, activation=activation, learn_proj=learn_proj, weighted=weighted, **kwargs)
 
+
+def create_general_rp_poly_kernel(d, degrees, learn_proj=False, weighted=False, kernel_type='RBF', space_proj='False'):
+    out_dim = sum(degrees)
+    W = torch.cat([rp.gen_rp(d, 1) for _ in range(out_dim)], dim=1).t()
+    b = torch.zeros(out_dim)
+    projection_module = torch.nn.Linear(d, out_dim)
+    projection_module.weight = torch.nn.Parameter(W)
+    projection_module.bias = torch.nn.Parameter(b)
+    if kernel_type == 'RBF':
+        kernel = gpytorch.kernels.RBFKernel
+        kwargs = dict()
+    elif kernel_type == 'Matern':
+        kernel = gpytorch.kernels.MaternKernel
+        kwargs = dict(nu=1.5)
+    else:
+        raise ValueError("Unknown kernel type")
+
+    return GeneralizedProjectionKernel(degrees, d, kernel, projection_module, learn_proj, weighted, **kwargs)
 
 # TODO: Refactor by wrapping kernel "kinds" such as RP kernel, additive kernel etc. in a class and use inheritance...
 def create_rp_kernel(d, k, J, ard=False, activation=None, ski=False,
@@ -331,7 +349,7 @@ def create_exact_gp(trainX, trainY, kind, **kwargs):
         additive: if True, (and not RP) use an additive kernel instead of RP or RBF
         """
     [n, d] = trainX.shape
-    if kind not in ['full', 'rp', 'additive', 'pca', 'pca_rp', 'rp_poly', 'deep_rp_poly']:
+    if kind not in ['full', 'rp', 'additive', 'pca', 'pca_rp', 'rp_poly', 'deep_rp_poly', 'general_rp_poly']:
         raise ValueError("Unknown kernel structure type {}".format(kind))
 
     # regular Gaussian likelihood for regression problem
@@ -374,6 +392,10 @@ def create_exact_gp(trainX, trainY, kind, **kwargs):
             raise ValueError("I'm pretty sure this is wrong but haven't fixed it yet")
             grid_size = int(grid_ratio * math.pow(n, 1 / k))
         kernel = create_deep_rp_poly_kernel(d, **kwargs)
+    elif kind == 'general_rp_poly':
+        if ski:
+            raise NotImplementedError()
+        kernel = create_general_rp_poly_kernel(d, **kwargs)
     elif kind == 'pca_rp':
         # TODO: modify to work with PCA RP
         raise NotImplementedError("Apparently not working with PCA RP??")
