@@ -252,7 +252,10 @@ def run_experiment_suite(datasets,
 
 
 def rp_compare_ablation(filename, datasets, rp_options, repeats=1, max_j=300):
-    df = pd.DataFrame()
+    if os.path.exists(filename):
+        df = pd.read_csv(filename)
+    else:
+        df = pd.DataFrame({'dataset': [], 'J': []})
 
     for dataset in datasets:
         print(dataset, 'starting')
@@ -264,6 +267,9 @@ def rp_compare_ablation(filename, datasets, rp_options, repeats=1, max_j=300):
             J_2 = J_1
             J_1 = J
             print("J=", J)
+            if not df[(df['J'] == J) & (df['dataset'] == dataset)].empty:
+                print("already done, skipping...")
+                continue
             rp_options['model_kwargs']['J'] = J
             options_json = json.dumps(rp_options)
             with gpytorch.settings.cg_tolerance(0.01):
