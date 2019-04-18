@@ -14,7 +14,7 @@ import torch
 from sklearn.decomposition import PCA
 import warnings
 import copy
-
+import numpy as np
 
 def _map_to_optim(optimizer):
     """Helper to map optimizer string names to torch objects"""
@@ -39,12 +39,13 @@ def _save_state_dict(model):
     return fname
 
 
-def create_deep_rp_poly_kernel(d, k, J, projection_architecture, projection_kwargs,
-                               ski=False, grid_size=None, learn_proj=False,
-                               weighted=False, kernel_type='RBF'):
-    if ski:
-        raise NotImplementedError("Deep poly projection kernel not implemented yet for SKI")
+def _sample_from_range(num_samples, range_):
+    return torch.rand(num_samples) * (range_[1] - range_[0]) + range_[0]
 
+
+def create_deep_rp_poly_kernel(d, k, J, projection_architecture, projection_kwargs, learn_proj=False,
+                               weighted=False, kernel_type='RBF', init_mixin_range=(1.0, 1.0),
+                               init_lengthscale_range=(1.0, 1.0), ski=False, ski_options=None):
     if projection_architecture == 'dnn':
         module = DNN(d, k*J, **projection_kwargs)
     else:
@@ -58,18 +59,20 @@ def create_deep_rp_poly_kernel(d, k, J, projection_architecture, projection_kwar
         kwargs = dict(nu=1.5)
     else:
         raise ValueError("Unknown kernel type")
-    return GeneralizedPolynomialProjectionKernel(J, k, d, kernel, module,
+
+    kernel = GeneralizedPolynomialProjectionKernel(J, k, d, kernel, module,
                                                  learn_proj=learn_proj,
-                                                 weighted=weighted, **kwargs)
+                                                 weighted=weighted, ski=ski, ski_options=ski_options,
+                                                   **kwargs)
+    kernel.initialize(init_mixin_range, init_lengthscale_range)
+    return kernel
 
 
-def create_rp_poly_kernel(d, k, J, activation=None, ski=False, grid_size=None,
+def create_rp_poly_kernel(d, k, J, activation=None,
                           learn_proj=False, weighted=False, kernel_type='RBF',
-                          space_proj=False
+                          space_proj=False, init_mixin_range=(1.0, 1.0), init_lengthscale_range=(1.0, 1.0),
+                          ski=False, ski_options=None,
                           ):
-    if ski:
-        raise ValueError("Poly projection kernel not implemented yet for SKI")
-
     projs = [rp.gen_rp(d, k) for _ in range(J)]
     bs = [torch.zeros(k) for _ in range(J)]
 
@@ -77,7 +80,7 @@ def create_rp_poly_kernel(d, k, J, activation=None, ski=False, grid_size=None,
         # TODO: If k>1, could implement equal spacing for each set of projs
         newW, _ = rp.space_equally(torch.cat(projs,dim=1).t(), lr=0.1, niter=5000)
         newW.requires_grad = False
-        projs = [newW[i:i+1,:].t() for i in range (J)]
+        projs = [newW[i:i+1, :].t() for i in range (J)]
 
     if kernel_type == 'RBF':
         kernel = gpytorch.kernels.RBFKernel
@@ -88,10 +91,15 @@ def create_rp_poly_kernel(d, k, J, activation=None, ski=False, grid_size=None,
     else:
         raise ValueError("Unknown kernel type")
 
-    return PolynomialProjectionKernel(J, k, d, kernel, projs, bs, activation=activation, learn_proj=learn_proj, weighted=weighted, **kwargs)
+    kernel = PolynomialProjectionKernel(J, k, d, kernel, projs, bs, activation=activation, learn_proj=learn_proj,
+                                        weighted=weighted, ski=ski, ski_options=ski_options, **kwargs)
+    kernel.initialize(init_mixin_range, init_lengthscale_range)
+    return kernel
 
 
-def create_general_rp_poly_kernel(d, degrees, learn_proj=False, weighted=False, kernel_type='RBF', space_proj='False'):
+def create_general_rp_poly_kernel(d, degrees, learn_proj=False, weighted=False, kernel_type='RBF',
+                                  init_lengthscale_range=(1.0, 1.0), init_mixin_range=(1.0, 1.0),
+                                  ski=False, ski_options=None):
     out_dim = sum(degrees)
     W = torch.cat([rp.gen_rp(d, 1) for _ in range(out_dim)], dim=1).t()
     b = torch.zeros(out_dim)
@@ -107,7 +115,10 @@ def create_general_rp_poly_kernel(d, degrees, learn_proj=False, weighted=False, 
     else:
         raise ValueError("Unknown kernel type")
 
-    return GeneralizedProjectionKernel(degrees, d, kernel, projection_module, learn_proj, weighted, **kwargs)
+    kernel = GeneralizedProjectionKernel(degrees, d, kernel, projection_module, learn_proj, weighted, ski, ski_options,
+                                         **kwargs)
+    kernel.initialize(init_mixin_range, init_lengthscale_range)
+    return kernel
 
 # TODO: Refactor by wrapping kernel "kinds" such as RP kernel, additive kernel etc. in a class and use inheritance...
 def create_rp_kernel(d, k, J, ard=False, activation=None, ski=False,
@@ -124,6 +135,7 @@ def create_rp_kernel(d, k, J, ard=False, activation=None, ski=False,
     learn_proj set to True to learn projection matrix elements
     weighted set to True to learn the linear combination of kernels
     """
+    # TODO: implement random initialization
     warnings.warn(DeprecationWarning("create_rp_kernel is deprecated and won't work right from now on."))
     if J < 1:
         raise ValueError("J<1")
@@ -156,6 +168,7 @@ def create_rp_kernel(d, k, J, ard=False, activation=None, ski=False,
 def create_additive_kernel(d, ski=False, grid_size=None, weighted=False, kernel_type='RBF'):
     """Inefficient implementation of a kernel where each dimension has its own RBF subkernel."""
     # TODO: convert to using PolynomialProjectionKernel
+    # TODO: add random initialization
     k = 1
     J = d
     kernels = []
@@ -183,6 +196,7 @@ def create_additive_kernel(d, ski=False, grid_size=None, weighted=False, kernel_
 def create_pca_kernel(trainX, random_projections=False, k=1, J=1, explained_variance=.99, ski=False, grid_size=None,
                       weighted=False, kernel_type='RBF'):
     # TODO: convert to using PolynomialProjectionKernel
+    # TODO: add random initialization
     [n, d] = trainX.shape
     if not random_projections and k != 1:
         raise ValueError("Additive RBF kernel selected but k is not 1.")
@@ -219,7 +233,7 @@ def create_pca_kernel(trainX, random_projections=False, k=1, J=1, explained_vari
     return ProjectionKernel(J, k, d, kernels, projs, bs, activation=None, learn_proj=False, weighted=weighted)
 
 
-def create_full_kernel(d, ard=False, ski=False, grid_size=None, kernel_type='RBF'):
+def create_full_kernel(d, ard=False, ski=False, grid_size=None, kernel_type='RBF', init_lengthscale_range=(1.0, 1.0)):
     """Helper to create an RBF kernel object with these options."""
     if ard:
         ard_num_dims = d
@@ -231,6 +245,9 @@ def create_full_kernel(d, ard=False, ski=False, grid_size=None, kernel_type='RBF
         kernel = gpytorch.kernels.MaternKernel(nu=1.5)
     else:
         raise ValueError("Unknown kernel type")
+
+    kernel.lengthscale = _sample_from_range(1, init_lengthscale_range)
+
     if ski:
         kernel = GridInterpolationKernel(kernel, num_dims=d,
                                          grid_size=grid_size)
@@ -359,6 +376,7 @@ def create_exact_gp(trainX, trainY, kind, **kwargs):
         noise_prior_ = None
 
     likelihood = gpytorch.likelihoods.GaussianLikelihood(noise_prior=noise_prior_)
+    likelihood.noise = _sample_from_range(1, kwargs.pop('init_noise_range', [1.0, 1.0]))
     grid_size = kwargs.pop('grid_size', None)
     grid_ratio = kwargs.pop('grid_ratio', None)
     ski = kwargs.get('ski', False)
@@ -383,18 +401,18 @@ def create_exact_gp(trainX, trainY, kind, **kwargs):
         kernel = create_rp_kernel(d, grid_size=grid_size, **kwargs)
     elif kind == 'rp_poly':
         # TODO: check this
-        if ski and grid_size is None:
-            raise ValueError("I'm pretty sure this is wrong but haven't fixed it yet")
-            grid_size = int(grid_ratio * math.pow(n, 1 / k))
+        # if ski and grid_size is None:
+        #     raise ValueError("I'm pretty sure this is wrong but haven't fixed it yet")
+        #     grid_size = int(grid_ratio * math.pow(n, 1 / k))
         kernel = create_rp_poly_kernel(d, **kwargs)
     elif kind == 'deep_rp_poly':
-        if ski and grid_size is None:
-            raise ValueError("I'm pretty sure this is wrong but haven't fixed it yet")
-            grid_size = int(grid_ratio * math.pow(n, 1 / k))
+        # if ski and grid_size is None:
+        #     raise ValueError("I'm pretty sure this is wrong but haven't fixed it yet")
+        #     grid_size = int(grid_ratio * math.pow(n, 1 / k))
         kernel = create_deep_rp_poly_kernel(d, **kwargs)
     elif kind == 'general_rp_poly':
-        if ski:
-            raise NotImplementedError()
+        # if ski:
+        #     raise NotImplementedError()
         kernel = create_general_rp_poly_kernel(d, **kwargs)
     elif kind == 'pca_rp':
         # TODO: modify to work with PCA RP
@@ -417,12 +435,37 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
     model_kwargs = copy.copy(model_kwargs)
     train_kwargs = copy.copy(train_kwargs)
 
-    model, likelihood = create_exact_gp(trainX, trainY, kind, **model_kwargs)
-
-    # regular marginal log likelihood
-    mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
-
+    # Change some options just for initial training with random restarts.
+    random_restarts = train_kwargs.pop('random_restarts', 1)
+    init_iters = train_kwargs.pop('init_iters', 20)
     optimizer_ = _map_to_optim(train_kwargs.pop('optimizer'))
+
+    initial_train_kwargs = copy.copy(train_kwargs)
+    initial_train_kwargs['max_iter'] = init_iters
+    initial_train_kwargs['check_conv'] = False
+    initial_train_kwargs['verbose'] = 0  # don't shout about it
+    best_model, best_likelihood, best_mll = None, None, None
+    best_loss = np.inf
+
+    # Do some number of random restarts, keeping the best one after a truncated training.
+    for restart in range(random_restarts):
+        model, likelihood = create_exact_gp(trainX, trainY, kind, **model_kwargs)
+
+        # regular marginal log likelihood
+        mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
+        _ = train_to_convergence(model, trainX, trainY, optimizer=optimizer_,
+                                 objective=mll, isloss=False, **initial_train_kwargs)
+        model.eval()
+        output = model(trainX)
+        loss = -mll(output, trainY).item()
+        if loss < best_loss:
+            best_loss = loss
+            best_model = model
+            best_likelihood = likelihood
+            best_mll = mll
+    model = best_model
+    likelihood = best_likelihood
+    mll = best_mll
 
     # fit GP
     trained_epochs = train_to_convergence(model, trainX, trainY, optimizer=optimizer_,
@@ -453,35 +496,3 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
     model_metrics['state_dict_file'] = _save_state_dict(model)
     return model_metrics, test_outputs.mean, model
 
-#
-# def train_SE_gp(trainX, trainY, testX, testY, **kwargs):
-#     """Alias for train_exact_gp() with rp=False, kept for legacy"""
-#     return train_exact_gp(trainX, trainY, testX, testY, kind='full', **kwargs)
-#
-#
-# def train_additive_rp_gp(trainX, trainY, testX, testY, **kwargs):
-#     """Alias for train_exact_gp() with rp=True, kept for legacy"""
-#     return train_exact_gp(trainX, trainY, testX, testY, rp='rp', **kwargs)
-
-
-def train_lr(trainX, trainY, testX, testY, optimizer='lbfgs', **train_kwargs):
-    """(As of yet unused) function to create and train a linear regression model"""
-    model = LinearRegressionModel(trainX, trainY)
-    loss = torch.nn.MSELoss()
-
-    if optimizer == 'lbfgs':
-        optimizer_ = torch.optim.LBFGS
-    elif optimizer == 'adam':
-        optimizer_ = torch.optim.Adam
-    elif optimizer == 'sgd':
-        optimizer_ = torch.optim.SGD
-    else:
-        raise ValueError("Unknown optimizer {}".format(optimizer))
-    train_to_convergence(model, trainX, trainY, optimizer_, objective=loss,
-                         isloss=True, **train_kwargs)
-
-    model.eval()
-    model_metrics = dict()
-    ypred = model(testX)
-
-    return model_metrics, ypred

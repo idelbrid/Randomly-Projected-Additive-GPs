@@ -286,13 +286,31 @@ def rp_compare_ablation(filename, datasets, rp_options, repeats=1, max_j=300):
 
 
 if __name__ == '__main__':
-    options = dict(kind='rp_poly', 
-                   model_kwargs=dict(k=1, J=1, noise_prior=True, kernel_type='RBF', learn_proj=False, weighted=True, space_proj=False),
+    # options = dict(kind='rp_poly',
+    #                model_kwargs=dict(k=1, J=1, noise_prior=True, kernel_type='RBF', learn_proj=False, weighted=True, space_proj=False),
+    #                train_kwargs=dict(verbose=False, optimizer='adam', max_iter=1000, lr=0.1, patience=20, smooth=True))
+    # datasets = get_small_datasets() + get_medium_datasets()
+    # datasets = datasets[:18]  # thru wine
+    # rp_compare_ablation('4-12_big_k=1_rp_ablation.csv', datasets, options, repeats=2, max_j=300)
+
+    options = dict(kind='deep_rp_poly',
+                   model_kwargs=dict(k=1, J=20, projection_architecture='dnn',
+                                     projection_kwargs=dict(hidden_layer_sizes=[1000, 1000, 500, 50], nonlinearity='relu'),
+                                     noise_prior=True, kernel_type='RBF', learn_proj=False, weighted=True,
+                                     ski=True, ski_options=dict(grid_size=1000, num_dims=1)),
                    train_kwargs=dict(verbose=False, optimizer='adam', max_iter=1000, lr=0.1, patience=20, smooth=True))
-    datasets = get_small_datasets() + get_medium_datasets()
-    datasets = datasets[:18]  # thru wine
-    rp_compare_ablation('4-12_big_k=1_rp_ablation.csv', datasets, options, repeats=2, max_j=300)
-    
+    # datasets = get_small_datasets() + get_medium_datasets()
+    # datasets = datasets[:18]  # thru wine
+    datasets = ['stock', 'concreteslump', 'autos', 'servo']
+    df = pd.DataFrame()
+    for dataset in datasets:
+        with gpytorch.settings.cg_tolerance(0.05):
+            results = run_experiment(training_routines.train_exact_gp, options,
+                           dataset, split=0.1, cv=True, repeats=1, normalize_using_train=True)
+            results['dataset'] = dataset
+            df = pd.concat([df, results])
+        df.to_csv('4-15_deep_with_ski_degree_test.csv')
+    #
 
     # def run():
     #    with gpytorch.settings.fast_pred_var(True):

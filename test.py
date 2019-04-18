@@ -215,7 +215,6 @@ class TestPolyProjectionKernel(TestCase):
         self.assertFalse(kernel.projection_module.weight.requires_grad)
         self.assertFalse(kernel.projection_module.bias.requires_grad)
 
-
     def test_forward(self):
         kernel = PolynomialProjectionKernel(self.J, self.k, self.d, self.base_kernel, self.Ws, self.bs, activation=None, learn_proj=False, weighted=False)
         output = kernel(real_data, real_data)
@@ -380,6 +379,35 @@ class TestGeneralPolyProjKernel(TestCase):
         self.assertFalse(kernel.projection_module.fc1.weight.requires_grad)
         self.assertFalse(kernel.projection_module.fc2.weight.requires_grad)
         self.assertFalse(kernel.projection_module.fc2.bias.requires_grad)
+
+
+    def test_initialize(self):
+        kernel = GeneralizedPolynomialProjectionKernel(
+            self.J, self.k, self.d, self.base_kernel, self.projection,
+            learn_proj=False, weighted=False)
+        kernel.initialize([0.1, 0.1], [0.1, 0.1])
+
+        self.assertAlmostEqual(kernel.kernel.kernels[0].outputscale.item(), 1/self.J)
+        self.assertAlmostEqual(kernel.kernel.kernels[0].base_kernel.kernels[0].lengthscale.item(), 0.1)
+        self.assertFalse(kernel.kernel.kernels[0].raw_outputscale.requires_grad)
+
+        kernel = GeneralizedPolynomialProjectionKernel(
+            self.J, self.k, self.d, self.base_kernel, self.projection,
+            learn_proj=False, weighted=True)
+        kernel.initialize([0.1, 0.1], [0.1, 0.1])
+
+        self.assertAlmostEqual(kernel.kernel.kernels[0].outputscale.item(), 1 / self.J)
+        self.assertAlmostEqual(kernel.kernel.kernels[0].base_kernel.kernels[0].lengthscale.item(), 0.1)
+        self.assertTrue(kernel.kernel.kernels[0].raw_outputscale.requires_grad)
+
+    def test_ski(self):
+        kernel = GeneralizedPolynomialProjectionKernel(
+            self.J, self.k, self.d, self.base_kernel, self.projection,
+            learn_proj=False, weighted=False, ski=True, ski_options=dict(grid_size=1000, num_dims=1))
+        kernel.initialize([0.1, 0.2], [0.1, 0.2])
+        kernel(real_data)
+        self.assertIsInstance(kernel.kernel.kernels[0].base_kernel.kernels[0], gpytorch.kernels.GridInterpolationKernel)
+
 
 
 class TestSpaceEqually(TestCase):
