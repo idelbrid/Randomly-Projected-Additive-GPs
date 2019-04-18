@@ -295,7 +295,7 @@ if __name__ == '__main__':
 
     options = dict(kind='deep_rp_poly',
                    model_kwargs=dict(k=1, J=20, projection_architecture='dnn',
-                                     projection_kwargs=dict(hidden_layer_sizes=[1000, 1000, 500, 50], nonlinearity='relu'),
+                                     projection_kwargs=dict(hidden_layer_sizes=[50], nonlinearity='relu'),
                                      noise_prior=True, kernel_type='RBF', learn_proj=False, weighted=True,
                                      ski=True, ski_options=dict(grid_size=1000, num_dims=1)),
                    train_kwargs=dict(verbose=False, optimizer='adam', max_iter=1000, lr=0.1, patience=20, smooth=True))

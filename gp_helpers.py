@@ -104,7 +104,7 @@ class DNN(torch.nn.Module):
 
 class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
     def __init__(self, component_degrees, d, base_kernel, projection_module,
-                 learn_proj=False, weighted=False, ski=False, ski_options=None, **kernel_kwargs):
+                 learn_proj=False, weighted=False, ski=False, ski_options=None, X=None, **kernel_kwargs):
         super(GeneralizedProjectionKernel, self).__init__()
 
         self.learn_proj = learn_proj
@@ -118,14 +118,28 @@ class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
             for param in self.projection_module.parameters():
                 param.requires_grad = True
 
+        if ski and not learn_proj and X is not None:
+            proj = self._project(X)
+            x_maxs = proj.max(0)[0].tolist()
+            x_mins = proj.min(0)[0].tolist()
+            spacings = [(xmax - xmin) / (1.0*ski_options['grid_size']-4) for xmin, xmax in zip(x_mins, x_maxs)]
+            bounds = [[xmin-2.01*space, xmax+2.01*space] for xmin, xmax, space in zip(x_mins, x_maxs, spacings)]
+        else:
+            bounds = [None for _ in range(sum(component_degrees))]
+
         kernels = []
         dim_count = 0
         for i in range(len(component_degrees)):
             product_kernels = []
             for j in range(component_degrees[i]):
-                bkernel = base_kernel(active_dims=dim_count, **kernel_kwargs)
                 if ski:
-                    bkernel = gpytorch.kernels.GridInterpolationKernel(bkernel, **ski_options)
+                    ad = None
+                else:
+                    ad = dim_count
+                bkernel = base_kernel(active_dims=ad, **kernel_kwargs)
+                if ski:
+                    bkernel = gpytorch.kernels.GridInterpolationKernel(bkernel, active_dims=dim_count,
+                                                                       grid_bounds=[bounds[dim_count]], **ski_options)
                 product_kernels.append(bkernel)
                 dim_count += 1
             product_kernel = gpytorch.kernels.ProductKernel(*product_kernels)
@@ -183,15 +197,30 @@ class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
                 else:
                     kk.base_kernel.lengthscale = ls
 
+    # def eval(self):
+    #     if self.ski:
+    #         for i, k in enumerate(self.kernel.kernels):
+    #             for j, kk in enumerate(k.base_kernel.kernels):
+    #                 kk.grid_is_dynamic = True
+    #                 print('Setting dynamic true')
+    #     return super(GeneralizedProjectionKernel, self).eval()
+
+    def train(self, mode=True):
+        if self.ski:
+            for i, k in enumerate(self.kernel.kernels):
+                for j, kk in enumerate(k.base_kernel.kernels):
+                    kk.grid_is_dynamic = not mode
+                    # print('Setting dynamic {}'.format(not mode))
+        return super(GeneralizedProjectionKernel, self).train(mode=mode)
 
 # TODO: make sure this works right
 # TODO: implement mixtures of products via kernel powers (log(K) ~ a log(k1) + b log(k2) -> K ~ k1^a * k2^b
 class GeneralizedPolynomialProjectionKernel(GeneralizedProjectionKernel):
     def __init__(self, J, k, d, base_kernel, projection_module,
-                 learn_proj=False, weighted=False,  ski=False, ski_options=None, **kernel_kwargs):
+                 learn_proj=False, weighted=False,  ski=False, ski_options=None, X=None, **kernel_kwargs):
         degrees = [k for _ in range(J)]
         super(GeneralizedPolynomialProjectionKernel, self).__init__(degrees, d, base_kernel, projection_module,
-                                                                    learn_proj, weighted, ski, ski_options,
+                                                                    learn_proj, weighted, ski, ski_options, X=X,
                                                                     **kernel_kwargs)
         self.J = J
         self.k = k
@@ -199,7 +228,7 @@ class GeneralizedPolynomialProjectionKernel(GeneralizedProjectionKernel):
 
 class PolynomialProjectionKernel(GeneralizedPolynomialProjectionKernel):
     def __init__(self, J, k, d, base_kernel, Ws, bs, activation=None,
-                 learn_proj=False, weighted=False,  ski=False, ski_options=None, **kernel_kwargs):
+                 learn_proj=False, weighted=False,  ski=False, ski_options=None, X=None, **kernel_kwargs):
         if activation is not None:
             raise ValueError("activation not supported through the normal projection interface. Use the GeneralPolynomialProjectionKernel instead.")
         projection_module = torch.nn.Linear(d, J*k)
@@ -209,7 +238,7 @@ class PolynomialProjectionKernel(GeneralizedPolynomialProjectionKernel):
         projection_module.bias = b
         super(PolynomialProjectionKernel, self
               ).__init__(J, k, d, base_kernel, projection_module,
-                         learn_proj, weighted, ski, ski_options, **kernel_kwargs)
+                         learn_proj, weighted, ski, ski_options, X=X, **kernel_kwargs)
 
 
 class ProjectionKernel(gpytorch.kernels.Kernel):

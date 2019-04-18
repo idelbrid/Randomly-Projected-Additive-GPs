@@ -45,7 +45,8 @@ def _sample_from_range(num_samples, range_):
 
 def create_deep_rp_poly_kernel(d, k, J, projection_architecture, projection_kwargs, learn_proj=False,
                                weighted=False, kernel_type='RBF', init_mixin_range=(1.0, 1.0),
-                               init_lengthscale_range=(1.0, 1.0), ski=False, ski_options=None):
+                               init_lengthscale_range=(1.0, 1.0), ski=False, ski_options=None,
+                               X=None):
     if projection_architecture == 'dnn':
         module = DNN(d, k*J, **projection_kwargs)
     else:
@@ -62,7 +63,7 @@ def create_deep_rp_poly_kernel(d, k, J, projection_architecture, projection_kwar
 
     kernel = GeneralizedPolynomialProjectionKernel(J, k, d, kernel, module,
                                                  learn_proj=learn_proj,
-                                                 weighted=weighted, ski=ski, ski_options=ski_options,
+                                                 weighted=weighted, ski=ski, ski_options=ski_options, X=X,
                                                    **kwargs)
     kernel.initialize(init_mixin_range, init_lengthscale_range)
     return kernel
@@ -71,7 +72,7 @@ def create_deep_rp_poly_kernel(d, k, J, projection_architecture, projection_kwar
 def create_rp_poly_kernel(d, k, J, activation=None,
                           learn_proj=False, weighted=False, kernel_type='RBF',
                           space_proj=False, init_mixin_range=(1.0, 1.0), init_lengthscale_range=(1.0, 1.0),
-                          ski=False, ski_options=None,
+                          ski=False, ski_options=None, X=None,
                           ):
     projs = [rp.gen_rp(d, k) for _ in range(J)]
     bs = [torch.zeros(k) for _ in range(J)]
@@ -92,14 +93,14 @@ def create_rp_poly_kernel(d, k, J, activation=None,
         raise ValueError("Unknown kernel type")
 
     kernel = PolynomialProjectionKernel(J, k, d, kernel, projs, bs, activation=activation, learn_proj=learn_proj,
-                                        weighted=weighted, ski=ski, ski_options=ski_options, **kwargs)
+                                        weighted=weighted, ski=ski, ski_options=ski_options, X=X, **kwargs)
     kernel.initialize(init_mixin_range, init_lengthscale_range)
     return kernel
 
 
 def create_general_rp_poly_kernel(d, degrees, learn_proj=False, weighted=False, kernel_type='RBF',
                                   init_lengthscale_range=(1.0, 1.0), init_mixin_range=(1.0, 1.0),
-                                  ski=False, ski_options=None):
+                                  ski=False, ski_options=None, X=None):
     out_dim = sum(degrees)
     W = torch.cat([rp.gen_rp(d, 1) for _ in range(out_dim)], dim=1).t()
     b = torch.zeros(out_dim)
@@ -116,7 +117,7 @@ def create_general_rp_poly_kernel(d, degrees, learn_proj=False, weighted=False, 
         raise ValueError("Unknown kernel type")
 
     kernel = GeneralizedProjectionKernel(degrees, d, kernel, projection_module, learn_proj, weighted, ski, ski_options,
-                                         **kwargs)
+                                         X=X, **kwargs)
     kernel.initialize(init_mixin_range, init_lengthscale_range)
     return kernel
 
@@ -404,16 +405,16 @@ def create_exact_gp(trainX, trainY, kind, **kwargs):
         # if ski and grid_size is None:
         #     raise ValueError("I'm pretty sure this is wrong but haven't fixed it yet")
         #     grid_size = int(grid_ratio * math.pow(n, 1 / k))
-        kernel = create_rp_poly_kernel(d, **kwargs)
+        kernel = create_rp_poly_kernel(d, X=trainX, **kwargs)
     elif kind == 'deep_rp_poly':
         # if ski and grid_size is None:
         #     raise ValueError("I'm pretty sure this is wrong but haven't fixed it yet")
         #     grid_size = int(grid_ratio * math.pow(n, 1 / k))
-        kernel = create_deep_rp_poly_kernel(d, **kwargs)
+        kernel = create_deep_rp_poly_kernel(d, X=trainX, **kwargs)
     elif kind == 'general_rp_poly':
         # if ski:
         #     raise NotImplementedError()
-        kernel = create_general_rp_poly_kernel(d, **kwargs)
+        kernel = create_general_rp_poly_kernel(d, X=trainX, **kwargs)
     elif kind == 'pca_rp':
         # TODO: modify to work with PCA RP
         raise NotImplementedError("Apparently not working with PCA RP??")
