@@ -338,5 +338,6 @@ if __name__ == '__main__':
                 results = run_experiment(training_routines.train_exact_gp, options,
                                dataset, split=args.split, cv=args.cv, repeats=args.repeats, normalize_using_train=True)
             results['dataset'] = dataset
+            results['options'] = json.dumps(options)
             df = pd.concat([df, results])
             df.to_csv(args.output)

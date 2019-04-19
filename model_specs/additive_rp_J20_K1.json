@@ -1,0 +1,19 @@
+{
+  "kind": "rp_poly",
+  "model_kwargs": {
+    "k": 1,
+    "J": 20,
+    "noise_prior": true,
+    "kernel_type": "RBF",
+    "learn_proj": false,
+    "weighted": true,
+  },
+  "train_kwargs": {
+    "verbose": false,
+    "optimizer": "adam",
+    "max_iter": 1000,
+    "lr": 0.1,
+    "patience": 20,
+    "smooth": true
+  }
+}
