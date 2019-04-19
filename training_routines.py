@@ -459,7 +459,12 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
     # Do some number of random restarts, keeping the best one after a truncated training.
     for restart in range(random_restarts):
         # TODO: log somehow what's happening in the restarts.
-        model, likelihood = create_exact_gp(trainX, trainY, kind, **model_kwargs)
+        if device == 'cpu':
+            torch_device = None
+        else:
+            torch_device = torch.device(device)
+        with torch.device(torch_device):
+            model, likelihood = create_exact_gp(trainX, trainY, kind, **model_kwargs)
         model = model.to(device)
 
         # regular marginal log likelihood
