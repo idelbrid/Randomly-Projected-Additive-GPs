@@ -286,36 +286,53 @@ def rp_compare_ablation(filename, datasets, rp_options, repeats=1, max_j=300):
 
 
 if __name__ == '__main__':
-    # options = dict(kind='rp_poly',
-    #                model_kwargs=dict(k=1, J=1, noise_prior=True, kernel_type='RBF', learn_proj=False, weighted=True, space_proj=False),
-    #                train_kwargs=dict(verbose=False, optimizer='adam', max_iter=1000, lr=0.1, patience=20, smooth=True))
-    # datasets = get_small_datasets() + get_medium_datasets()
-    # datasets = datasets[:18]  # thru wine
-    # rp_compare_ablation('4-12_big_k=1_rp_ablation.csv', datasets, options, repeats=2, max_j=300)
+    import json
+    import argparse
 
-    options = dict(kind='deep_rp_poly',
-                   model_kwargs=dict(k=1, J=20, projection_architecture='dnn',
-                                     projection_kwargs=dict(hidden_layer_sizes=[50], nonlinearity='relu'),
-                                     noise_prior=True, kernel_type='RBF', learn_proj=False, weighted=True,
-                                     ski=True, ski_options=dict(grid_size=1000, num_dims=1)),
-                   train_kwargs=dict(verbose=False, optimizer='adam', max_iter=1000, lr=0.1, patience=20, smooth=True))
-    # datasets = get_small_datasets() + get_medium_datasets()
-    # datasets = datasets[:18]  # thru wine
-    datasets = ['stock', 'concreteslump', 'autos', 'servo']
+    parser = argparse.ArgumentParser(description='Utility to run a suite of experiments with a GP model on UCI regression datasets.')
+    parser.add_argument('-m', '--model_spec', type=str, help='path to model specification json file', required=True)
+    parser.add_argument('-d', '--datasets', type=str, nargs='+', required=True, help='UCI dataset name(s) or predefined set of of datasets')
+    parser.add_argument('-o', '--output', type=str, required=True, help='path to output csv file')
+    parser.add_argument('-s', '--split', type=float, default=0.1, required=False, help='fraction of data in test set')
+    parser.add_argument('-r', '--repeats', type=int, default=1, required=False, help='number of times to repeat each fold')
+    parser.add_argument('--no_cv', action='store_false', dest='cv')
+    parser.add_argument('--cg_tol', type=float, default=0.05, required=False)
+    parser.add_argument('--no_fast_pred', dest='fast_pred', action='store_false')
+    parser.add_argument('--use_chol', action='store_true')
+    parser.add_argument('--no_toeplitz', dest='use_toeplitz', action='store_false')
+
+    args = parser.parse_args()
+
+    print('Parser arguments', args)
+
+    with open(args.model_spec, 'r') as f:
+        options = json.load(f)
+
+    print('Loaded options', options)
+
+    if len(args.datasets) == 1:
+        if args.datasets[0] == 'all':
+            datasets = get_datasets()
+        elif args.datasets[0] == 'small':
+            datasets = get_small_datasets()
+        elif args.datasets[0] == 'small-med':
+            datasets = get_datasets()[:18]  # through wine?
+        elif args.datasets[0] == 'med':
+            datasets = get_datasets()[18:24]
+        elif args.datasets[0] == 'large':
+            datasets = get_datasets()[24:]
+        else:
+            datasets = args.datasets
+    else:
+        datasets = args.datasets
+
     df = pd.DataFrame()
     for dataset in datasets:
-        with gpytorch.settings.cg_tolerance(0.05):
-            results = run_experiment(training_routines.train_exact_gp, options,
-                           dataset, split=0.1, cv=True, repeats=1, normalize_using_train=True)
+        print('Starting dataset {}'.format(dataset))
+        with gpytorch.settings.cg_tolerance(args.cg_tol), gpytorch.settings.fast_computations(not args.use_chol, args.fast_pred):
+            with gpytorch.settings.use_toeplitz(args.use_toeplitz):
+                results = run_experiment(training_routines.train_exact_gp, options,
+                               dataset, split=args.split, cv=args.cv, repeats=args.repeats, normalize_using_train=True)
             results['dataset'] = dataset
             df = pd.concat([df, results])
-        df.to_csv('4-15_deep_with_ski_degree_test.csv')
-    #
-
-    # def run():
-    #    with gpytorch.settings.fast_pred_var(True):
-    #         run_experiment(train_additive_rp_gp, dict(verbose=False, ard=False, activation=None,
-    #                                                   optimizer='adam', n_epochs=100, lr=0.1, patience=20, k=1, J=1,
-    #                                                   smooth=True, noise_prior=True, ski=True, grid_ratio=1.0),
-    #                        'sml', 0.1, cv=False)
-
+            df.to_csv(args.output)
