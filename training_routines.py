@@ -431,10 +431,16 @@ def create_exact_gp(trainX, trainY, kind, **kwargs):
 
 # TODO: raise a warning if somewhat important options are missing.
 # TODO: change the key word arguments to model options and rename train_kwargs to train options. This applies to basically all of the functions here.
-def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwargs):
+def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwargs, device='cpu'):
     """Create and train an exact GP with the given options"""
     model_kwargs = copy.copy(model_kwargs)
     train_kwargs = copy.copy(train_kwargs)
+
+    device = torch.device(device)
+    trainX = trainX.to(device)
+    trainY = trainY.to(device)
+    testX = testX.to(device)
+    testY = testY.to(device)
 
     # Change some options just for initial training with random restarts.
     random_restarts = train_kwargs.pop('random_restarts', 1)
@@ -448,9 +454,12 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
     best_model, best_likelihood, best_mll = None, None, None
     best_loss = np.inf
 
+    # TODO: move random restarts code to a train_to_convergence-like function
     # Do some number of random restarts, keeping the best one after a truncated training.
     for restart in range(random_restarts):
+        # TODO: log somehow what's happening in the restarts.
         model, likelihood = create_exact_gp(trainX, trainY, kind, **model_kwargs)
+        model = model.to(device)
 
         # regular marginal log likelihood
         mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
