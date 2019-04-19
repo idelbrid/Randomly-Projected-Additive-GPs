@@ -8,6 +8,7 @@ import traceback
 import os
 from scipy.io import loadmat
 import json
+print(torch.__version__)
 import gpytorch
 
 from gp_models import mean_squared_error
@@ -297,10 +298,11 @@ if __name__ == '__main__':
     parser.add_argument('-r', '--repeats', type=int, default=1, required=False, help='number of times to repeat each fold')
     parser.add_argument('--no_cv', action='store_false', dest='cv')
     parser.add_argument('--cg_tol', type=float, default=0.05, required=False)
-    parser.add_argument('--no_fast_pred', dest='fast_pred', action='store_false')
+    parser.add_argument('--fast_pred', dest='fast_pred', action='store_true')
     parser.add_argument('--use_chol', action='store_true')
     parser.add_argument('--no_toeplitz', dest='use_toeplitz', action='store_false')
     parser.add_argument('--device', type=str, default='cpu', required=False, help='device string to use in PyTorch')
+    parser.add_argument('--skip_posterior_variances', action='store_true')
 
     args = parser.parse_args()
 
@@ -313,6 +315,7 @@ if __name__ == '__main__':
 
     print('Using device {}'.format(args.device))
     options['device'] = args.device
+    options['skip_posterior_variances'] = args.skip_posterior_variances
 
     if len(args.datasets) == 1:
         if args.datasets[0] == 'all':
@@ -333,10 +336,12 @@ if __name__ == '__main__':
     df = pd.DataFrame()
     for dataset in datasets:
         print('Starting dataset {}'.format(dataset))
-        with gpytorch.settings.cg_tolerance(args.cg_tol), gpytorch.settings.fast_computations(not args.use_chol, args.fast_pred):
+        with gpytorch.settings.cg_tolerance(args.cg_tol),gpytorch.settings.fast_computations(not args.use_chol),gpytorch.settings.fast_pred_var(args.fast_pred):
+
             with gpytorch.settings.use_toeplitz(args.use_toeplitz):
                 results = run_experiment(training_routines.train_exact_gp, options,
-                               dataset, split=args.split, cv=args.cv, repeats=args.repeats, normalize_using_train=True)
+                               dataset, split=args.split, cv=args.cv, repeats=args.repeats,
+                                         normalize_using_train=True)
             results['dataset'] = dataset
             results['options'] = json.dumps(options)
             df = pd.concat([df, results])

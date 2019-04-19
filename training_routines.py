@@ -431,7 +431,8 @@ def create_exact_gp(trainX, trainY, kind, **kwargs):
 
 # TODO: raise a warning if somewhat important options are missing.
 # TODO: change the key word arguments to model options and rename train_kwargs to train options. This applies to basically all of the functions here.
-def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwargs, device='cpu'):
+def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwargs, device='cpu',
+                   skip_posterior_variances=False):
     """Create and train an exact GP with the given options"""
     model_kwargs = copy.copy(model_kwargs)
     train_kwargs = copy.copy(train_kwargs)
@@ -465,7 +466,7 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
         mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
         _ = train_to_convergence(model, trainX, trainY, optimizer=optimizer_,
                                  objective=mll, isloss=False, **initial_train_kwargs)
-        model.eval()
+        model.train()
         output = model(trainX)
         loss = -mll(output, trainY).item()
         if loss < best_loss:
@@ -492,16 +493,18 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
         train_outputs = model(trainX)
         model_metrics['prior_train_nmll'] = -mll(train_outputs, trainY).item()
 
-        model.eval()  # Now consider posterior distributions
-        likelihood.eval()
-        train_outputs = model(trainX)
-        test_outputs = model(testX)
-        model_metrics['train_nll'] = -likelihood(train_outputs).log_prob(
-            trainY).item()
-        model_metrics['test_nll'] = -likelihood(test_outputs).log_prob(
-            testY).item()
-        model_metrics['train_mse'] = mean_squared_error(train_outputs.mean,
-                                                        trainY)
+        with gpytorch.settings.skip_posterior_variances(skip_posterior_variances):
+            model.eval()  # Now consider posterior distributions
+            likelihood.eval()
+            train_outputs = model(trainX)
+            test_outputs = model(testX)
+            if not skip_posterior_variances:
+                model_metrics['train_nll'] = -likelihood(train_outputs).log_prob(
+                    trainY).item()
+                model_metrics['test_nll'] = -likelihood(test_outputs).log_prob(
+                    testY).item()
+            model_metrics['train_mse'] = mean_squared_error(train_outputs.mean,
+                                                            trainY)
 
     model_metrics['state_dict_file'] = _save_state_dict(model)
     return model_metrics, test_outputs.mean, model
