@@ -300,6 +300,7 @@ if __name__ == '__main__':
     parser.add_argument('--no_fast_pred', dest='fast_pred', action='store_false')
     parser.add_argument('--use_chol', action='store_true')
     parser.add_argument('--no_toeplitz', dest='use_toeplitz', action='store_false')
+    parser.add_argument('--device', type=str, default='cpu', required=False, help='device string to use in PyTorch')
 
     args = parser.parse_args()
 
@@ -309,6 +310,9 @@ if __name__ == '__main__':
         options = json.load(f)
 
     print('Loaded options', options)
+
+    print('Using device {}'.format(args.device))
+    options['device'] = args.device
 
     if len(args.datasets) == 1:
         if args.datasets[0] == 'all':
