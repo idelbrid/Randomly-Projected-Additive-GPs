@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import torch
+print(torch.__version__)
 from typing import Callable, Dict, Union
 import time
 import datetime
