@@ -1,7 +1,7 @@
 from unittest import TestCase
-from gp_helpers import ProjectionKernel, PolynomialProjectionKernel, ExactGPModel, GeneralizedPolynomialProjectionKernel
+from gp_models import ProjectionKernel, PolynomialProjectionKernel, ExactGPModel, GeneralizedPolynomialProjectionKernel
 from rp import gen_rp, space_equally
-from rp_experiments import load_dataset, _normalize_by_train, _access_fold, _determine_folds
+from gp_experiment_runner import load_dataset, _normalize_by_train, _access_fold, _determine_folds
 import torch
 import torch.nn.functional as F
 import gpytorch

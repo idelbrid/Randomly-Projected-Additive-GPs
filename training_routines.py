@@ -3,13 +3,13 @@ import math
 from torch import __init__
 
 import rp
-from gp_helpers import ExactGPModel, train_to_convergence, ProjectionKernel, \
+from gp_models import ExactGPModel, train_to_convergence, ProjectionKernel, \
     LinearRegressionModel, mean_squared_error, PolynomialProjectionKernel, DNN,\
     GeneralizedPolynomialProjectionKernel, GeneralizedProjectionKernel
 import gpytorch
 from gpytorch.kernels import ScaleKernel, RBFKernel, GridInterpolationKernel
 from gpytorch.mlls import VariationalELBO, VariationalMarginalLogLikelihood
-from gp_helpers import SVGPRegressionModel
+from gp_models import SVGPRegressionModel
 import torch
 from sklearn.decomposition import PCA
 import warnings
