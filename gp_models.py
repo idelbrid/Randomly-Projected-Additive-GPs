@@ -119,6 +119,9 @@ class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
                 param.requires_grad = True
 
         if ski and not learn_proj and X is not None:
+            # This is a hack b/c X might be on the GPU before we send the model to the GPU
+            if X.device != torch.device('cpu'):  # if the data exists on the GPU
+                self.projection_module.to(X.device)  # send it to the same device
             proj = self._project(X)
             x_maxs = proj.max(0)[0].tolist()
             x_mins = proj.min(0)[0].tolist()
