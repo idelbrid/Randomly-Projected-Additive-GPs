@@ -5,7 +5,7 @@
     "noise_prior": true,
     "kernel_type": "RBF",
     "learn_proj": false,
-    "weighted": true,
+    "weighted": true
   },
   "train_kwargs": {
     "verbose": false,
