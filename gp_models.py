@@ -516,6 +516,6 @@ class ELMModule(torch.nn.Module):
         return out
 
 
-def mean_squared_error(y_pred: torch.Tensor, y_true: torch.Tensor):
+def mean_squared_error(y_pred, y_true):
     """Helper to calculate MSE"""
     return ((y_pred - y_true)**2).mean().item()

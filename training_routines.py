@@ -504,5 +504,5 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
                                                         trainY)
 
     model_metrics['state_dict_file'] = _save_state_dict(model)
-    return model_metrics, test_outputs.mean, model
+    return model_metrics, test_outputs.mean.to('cpu'), model
 
