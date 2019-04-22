@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
 import torch
-print(torch.__version__)
 from typing import Callable, Dict, Union
 import time
 import datetime
@@ -9,7 +8,6 @@ import traceback
 import os
 from scipy.io import loadmat
 import json
-print(torch.__version__)
 import gpytorch
 
 from gp_models import mean_squared_error

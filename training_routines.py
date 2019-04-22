@@ -1,7 +1,4 @@
 import math
-
-from torch import __init__
-
 import rp
 from gp_models import ExactGPModel, train_to_convergence, ProjectionKernel, \
     LinearRegressionModel, mean_squared_error, PolynomialProjectionKernel, DNN,\
