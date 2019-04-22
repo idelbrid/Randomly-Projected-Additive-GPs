@@ -40,12 +40,13 @@ def _sample_from_range(num_samples, range_):
     return torch.rand(num_samples) * (range_[1] - range_[0]) + range_[0]
 
 
-def create_deep_rp_poly_kernel(d, k, J, projection_architecture, projection_kwargs, learn_proj=False,
+def create_deep_rp_poly_kernel(d, degrees, projection_architecture, projection_kwargs, learn_proj=False,
                                weighted=False, kernel_type='RBF', init_mixin_range=(1.0, 1.0),
                                init_lengthscale_range=(1.0, 1.0), ski=False, ski_options=None,
                                X=None):
+    outputs = sum(degrees)
     if projection_architecture == 'dnn':
-        module = DNN(d, k*J, **projection_kwargs)
+        module = DNN(d, outputs, **projection_kwargs)
     else:
         raise NotImplementedError("No architecture besides DNN is implemented ATM")
 
@@ -58,7 +59,7 @@ def create_deep_rp_poly_kernel(d, k, J, projection_architecture, projection_kwar
     else:
         raise ValueError("Unknown kernel type")
 
-    kernel = GeneralizedPolynomialProjectionKernel(J, k, d, kernel, module,
+    kernel = GeneralizedProjectionKernel(degrees, d, kernel, module,
                                                  learn_proj=learn_proj,
                                                  weighted=weighted, ski=ski, ski_options=ski_options, X=X,
                                                    **kwargs)
@@ -433,12 +434,18 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
     """Create and train an exact GP with the given options"""
     model_kwargs = copy.copy(model_kwargs)
     train_kwargs = copy.copy(train_kwargs)
-
+    d = trainX.shape[-1]
     device = torch.device(device)
     trainX = trainX.to(device)
     trainY = trainY.to(device)
     testX = testX.to(device)
     testY = testY.to(device)
+
+    # replace with value from dataset for convenience
+    for k, v in list(model_kwargs.items()):
+        if isinstance(v, str) and v == 'd':
+            model_kwargs[k] = d
+
 
     # Change some options just for initial training with random restarts.
     random_restarts = train_kwargs.pop('random_restarts', 1)
