@@ -64,12 +64,13 @@ def EI(xs, gp, best):
 
 class BayesOpt(object):
     def __init__(self, obj_fxn: Callable, bounds: Iterable, gp_model: gpytorch.models.GP, acq_fxn: Callable,
-                 optimizer=differential_evolution, initial_point=None, gp_optim_freq=None, gp_optim_options=None):
+                 optimizer='brute', initial_point=None, gp_optim_freq=None, gp_optim_options=None):
         self.obj_fxn = obj_fxn
         self.bounds = bounds
         self.model = gp_model
         self.acq_fxn = acq_fxn
         self.optimizer = optimizer
+        self._dimension = len(bounds)
 
         if initial_point is None:
             initial_point = torch.tensor(bounds, dtype=torch.float)
@@ -81,6 +82,7 @@ class BayesOpt(object):
         self.obsY = obj_fxn(initial_point)
         self._best_x = self.obsX[0]
         self._best_y = self.obsY[0]
+        self._best_y_path = [self._best_y.item()]
         self._n = 1
 
         self.gp_optim_freq = gp_optim_freq
@@ -98,15 +100,38 @@ class BayesOpt(object):
         self.model.eval()
         return self.model
 
-    def step(self):
-        def optim_obj(x: np.array):
-            x = torch.tensor([x], dtype=torch.float)
-            return -self.acq_fxn(x, self.model, self._best_y).item()
+    def step(self, **optimizer_kwargs):
+        self._evaluations = 0
+        if self.optimizer not in ['brute', 'random']:
+            def optim_obj(x: np.array):
+                    self._evaluations += 1
+                    x = torch.tensor([x], dtype=torch.float)
+                    return -self.acq_fxn(x, self.model, self._best_y).item()
 
-        res = self.optimizer(optim_obj, self.bounds)  # TODO: look at more options?
+            res = self.optimizer(optim_obj, self.bounds, **optimizer_kwargs)  # TODO: look at more options?
+        else:
+            if self.optimizer == 'random':
+                candX = torch.rand()  # TODO: change to SobolEngine generation.
+            else:
+                spot_per_dim = []
+                num_per_dim = int(np.floor(np.power(1500, 1/self._dimension)))
+                for i in range(self._dimension):
+                    spots = torch.linspace(self.bounds[i][0], self.bounds[i][1], num_per_dim+2)[1:-1]
+                    spot_per_dim.append(spots)
+                tensors = torch.meshgrid(spot_per_dim)
+                stacked = torch.stack(tensors)
+                candX = stacked.reshape(-1, self._dimension)
+
+            acq = self.acq_fxn(candX, self.model, self._best_y)
+            maxidx = acq.argmax()
+            maxx = candX[maxidx]
+            maxy = self.obj_fxn(maxx)
+            res = scipy.optimize.OptimizeResult(x=maxx.item(), fun=maxy.item())
+
 
         newX = torch.tensor([res.x], dtype=torch.float)
         newY = self.obj_fxn(newX)
+        print(self._evaluations)
         # newY = torch.tensor([res.fun], dtype=torch.float)
         if newY < self._best_y:
             self._best_y = newY
@@ -114,12 +139,42 @@ class BayesOpt(object):
         self.obsX = torch.cat([self.obsX, newX], dim=0)
         self.obsY = torch.cat([self.obsY, newY], dim=0)
         self._n += 1
+        self._best_y_path.append(self._best_y.item())
 
         self.update_model()
          # TODO: Make more verbose and store history
         return self
 
-    def steps(self, num_steps):
-        for _ in range(num_steps):
-            self.step()
+    def steps(self, num_steps, print_=True, **optimizer_kwargs):
+        if print_:
+            print(self._best_y)
+        for i in range(num_steps):
+            self.step(**optimizer_kwargs)
+            if print_:
+                print(i, self._best_y)
         return self
+
+if __name__ == '__main__':
+    import training_routines
+    import scipy
+    d = 10
+    bounds = [(-4, 4) for _ in range(d)]
+    objective_function = sybtang
+    kernel = training_routines.create_general_rp_poly_kernel(10, [1, 1, 1, 2, 2, 3], learn_proj=False,
+                                                             kernel_type='Matern')
+    kernel = gpytorch.kernels.ScaleKernel(kernel)
+
+    trainX = torch.tensor([], dtype=torch.float)
+    trainY = torch.tensor([], dtype=torch.float)
+    lik = gpytorch.likelihoods.GaussianLikelihood()
+    lik.initialize(noise=0.01)
+    lik.raw_noise.requires_grad = False
+    model = gp_models.ExactGPModel(trainX, trainY, lik, kernel)
+    inner_optimizer = scipy.optimize.shgo
+    gp_optim_options = dict(max_iter=15, optimizer=torch.optim.Adam, verbose=False, lr=0.1, check_conv=False)
+
+    optimizer = BayesOpt(objective_function, bounds, model, bo.EI, inner_optimizer,
+                            gp_optim_freq=1, gp_optim_options=gp_optim_options)
+
+    with gpytorch.settings.lazily_evaluate_kernels(False):
+        optimizer.step()
