@@ -1,5 +1,6 @@
 from unittest import TestCase
 from gp_models import ProjectionKernel, PolynomialProjectionKernel, ExactGPModel, GeneralizedPolynomialProjectionKernel
+from gp_models import AdditiveKernel, StrictlyAdditiveKernel
 from rp import gen_rp, space_equally
 from gp_experiment_runner import load_dataset, _normalize_by_train, _access_fold, _determine_folds
 import torch
@@ -338,11 +339,12 @@ class TestPolyProjectionKernel(TestCase):
         model.train()
 
         optimizer_ = torch.optim.Adam(model.parameters(), lr=0.01)
-        optimizer_.zero_grad()
-        output = model(real_data)
-        loss = -mll(output, real_target)
-        loss.backward()
-        optimizer_.step()
+        for _ in range(10):
+            optimizer_.zero_grad()
+            output = model(real_data)
+            loss = -mll(output, real_target)
+            loss.backward()
+            optimizer_.step()
         self.assertNotEqual(kernel.kernel.kernels[0].base_kernel.kernels[0].raw_lengthscale, 0)
         self.assertAlmostEqual(kernel.kernel.kernels[0].outputscale.item(), 1/self.J)
         self.assertNotEqual(kernel.projection_module.weight[0, 0].item(), old_val)
@@ -380,7 +382,6 @@ class TestGeneralPolyProjKernel(TestCase):
         self.assertFalse(kernel.projection_module.fc2.weight.requires_grad)
         self.assertFalse(kernel.projection_module.fc2.bias.requires_grad)
 
-
     def test_initialize(self):
         kernel = GeneralizedPolynomialProjectionKernel(
             self.J, self.k, self.d, self.base_kernel, self.projection,
@@ -408,6 +409,34 @@ class TestGeneralPolyProjKernel(TestCase):
         kernel(real_data)
         self.assertIsInstance(kernel.kernel.kernels[0].base_kernel.kernels[0], gpytorch.kernels.GridInterpolationKernel)
 
+
+class TestStrictlyAdditiveKernel(TestCase):
+    def test_init(self):
+        kernel = StrictlyAdditiveKernel(real_d, gpytorch.kernels.RBFKernel)
+        self.assertIsInstance(kernel.kernel, gpytorch.kernels.AdditiveKernel)
+        self.assertIsInstance(kernel.kernel.kernels[0].base_kernel, gpytorch.kernels.RBFKernel)
+
+    def test_initialize(self):
+        kernel = StrictlyAdditiveKernel(real_d, gpytorch.kernels.RBFKernel)
+        kernel.initialize([0.1, 0.1], [0.1, 0.1])
+
+    def test_forward(self):
+        kernel = StrictlyAdditiveKernel(real_d, gpytorch.kernels.RBFKernel)
+        kernel.forward(real_data, real_data)
+
+class TestAdditiveKernel(TestCase):
+    def test_init(self):
+        kernel = AdditiveKernel([[1, 2], [0, 3]], 4, gpytorch.kernels.RBFKernel)
+        self.assertIsInstance(kernel.kernel.kernels[0].base_kernel.kernels[0], gpytorch.kernels.RBFKernel)
+
+    def test_forward(self):
+        kernel = AdditiveKernel([[1, 2], [0, 3]], 4, gpytorch.kernels.RBFKernel)
+        kernel2 = AdditiveKernel([[0, 1], [2, 3]], 4, gpytorch.kernels.RBFKernel)
+        x = torch.tensor([[0, 1, 2, 3],
+                          [0, 1, 4, 5]], dtype=torch.float)
+        k = kernel(x).evaluate()
+        k2 = kernel2(x).evaluate()
+        self.assertNotAlmostEqual(k[0, 1].item(), k2[0,1].item())
 
 
 class TestSpaceEqually(TestCase):
@@ -440,11 +469,6 @@ class TestSpaceEqually(TestCase):
                       dim=1).t()
         newP, loss = space_equally(P, 0.1, 10000)
         self.assertNotAlmostEqual(loss.item(), 0)
-
-
-
-
-
 
 
 class TestExperimentHelpers(TestCase):

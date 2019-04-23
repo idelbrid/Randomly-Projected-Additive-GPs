@@ -59,8 +59,8 @@ def create_deep_rp_poly_kernel(d, k, J, projection_architecture, projection_kwar
         raise ValueError("Unknown kernel type")
 
     kernel = GeneralizedPolynomialProjectionKernel(J, k, d, kernel, module,
-                                                 learn_proj=learn_proj,
-                                                 weighted=weighted, ski=ski, ski_options=ski_options, X=X,
+                                                   learn_proj=learn_proj,
+                                                   weighted=weighted, ski=ski, ski_options=ski_options, X=X,
                                                    **kwargs)
     kernel.initialize(init_mixin_range, init_lengthscale_range)
     return kernel
@@ -238,7 +238,7 @@ def create_full_kernel(d, ard=False, ski=False, grid_size=None, kernel_type='RBF
     else:
         ard_num_dims = None
     if kernel_type == 'RBF':
-        kernel = gpytorch.kernels.RBFKernel(ard_num_dims)
+        kernel = gpytorch.kernels.RBFKernel(ard_num_dims=ard_num_dims)
     elif kernel_type == 'Matern':
         kernel = gpytorch.kernels.MaternKernel(nu=1.5)
     else:

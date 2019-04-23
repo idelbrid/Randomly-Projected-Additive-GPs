@@ -102,6 +102,14 @@ class DNN(torch.nn.Module):
         return x
 
 
+class Identity(nn.Module):
+    def __init__(self):
+        super(Identity, self).__init__()
+
+    def forward(self, x):
+        return x
+
+
 class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
     def __init__(self, component_degrees, d, base_kernel, projection_module,
                  learn_proj=False, weighted=False, ski=False, ski_options=None, X=None, **kernel_kwargs):
@@ -111,6 +119,8 @@ class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
         self.projection_module = projection_module
         self.ski = ski
         self.ski_options = ski_options
+
+        # Manually set projection parameters' requires_grad attribute to False if we don't want to learn it.
         if not self.learn_proj:
             for param in self.projection_module.parameters():
                 param.requires_grad = False
@@ -118,6 +128,8 @@ class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
             for param in self.projection_module.parameters():
                 param.requires_grad = True
 
+        # Special stuff if we're using ski: need to compute projections ahead of time and
+        # derive the bounds of the projected data in order to create a static SKI grid.
         if ski and not learn_proj and X is not None:
             # This is a hack b/c X might be on the GPU before we send the model to the GPU
             if X.device != torch.device('cpu'):  # if the data exists on the GPU
@@ -141,11 +153,17 @@ class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
                     ad = dim_count
                 bkernel = base_kernel(active_dims=ad, **kernel_kwargs)
                 if ski:
+                    bds = None
+                    if bounds[dim_count] is not None:
+                        bds = [bounds[dim_count]]
                     bkernel = gpytorch.kernels.GridInterpolationKernel(bkernel, active_dims=dim_count,
-                                                                       grid_bounds=[bounds[dim_count]], **ski_options)
+                                                                       grid_bounds=bds, **ski_options)
                 product_kernels.append(bkernel)
                 dim_count += 1
-            product_kernel = gpytorch.kernels.ProductKernel(*product_kernels)
+            if len(product_kernels) == 1:
+                product_kernel = product_kernels[0]
+            else:
+                product_kernel = gpytorch.kernels.ProductKernel(*product_kernels)
             if weighted:
                 product_kernel = gpytorch.kernels.ScaleKernel(product_kernel)
                 product_kernel.initialize(outputscale=1/len(component_degrees))
@@ -163,14 +181,16 @@ class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
         self.weighted = weighted
         self.last_x1 = None
         self.cached_projections = None
+        self.cache_proj = not learn_proj  # can also manually set to False
 
     def _project(self, x):
         """Project matrix x with (multiple) random projections"""
         return self.projection_module(x)
 
     def forward(self, x1, x2, **params):
+        """a standard forward with a projection caching mechanism"""
         # Don't cache proj if weights are changing
-        if not self.learn_proj:
+        if (not self.learn_proj) and self.cache_proj:
             # if x1 is the same, don't re-project
             if self.last_x1 is not None and torch.equal(x1, self.last_x1):
                 x1_projections = self.cached_projections
@@ -185,7 +205,7 @@ class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
             return self.kernel(x1_projections)
         else:
             x2_projections = self._project(x2)
-            return self.kernel(x1_projections, x2_projections)
+            return self.kernel(x1_projections, x2_projections, **params)
 
     def initialize(self, mixin_range, lengthscale_range):
         mixins = _sample_from_range(len(self.component_degrees), mixin_range)
@@ -193,7 +213,11 @@ class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
         mixins.requires_grad = False  # todo: double check this does/doesn't make the parameter learnable
         for i, k in enumerate(self.kernel.kernels):
             k.outputscale = mixins[i]
-            for j, kk in enumerate(k.base_kernel.kernels):
+            if self.component_degrees[i] == 1:
+                subkernels = [k.base_kernel]
+            else:
+                subkernels = list(k.base_kernel.kernels)
+            for j, kk in enumerate(subkernels):
                 ls = _sample_from_range(1, lengthscale_range)
                 if not isinstance(kk, gpytorch.kernels.GridInterpolationKernel):
                     kk.lengthscale = ls
@@ -211,7 +235,11 @@ class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
     def train(self, mode=True):
         if self.ski:
             for i, k in enumerate(self.kernel.kernels):
-                for j, kk in enumerate(k.base_kernel.kernels):
+                if self.component_degrees[i] == 1:
+                    subkernels = [k.base_kernel]
+                else:
+                    subkernels = list(k.base_kernel.kernels)
+                for j, kk in enumerate(subkernels):
                     kk.grid_is_dynamic = not mode
                     # print('Setting dynamic {}'.format(not mode))
         return super(GeneralizedProjectionKernel, self).train(mode=mode)
@@ -242,6 +270,36 @@ class PolynomialProjectionKernel(GeneralizedPolynomialProjectionKernel):
         super(PolynomialProjectionKernel, self
               ).__init__(J, k, d, base_kernel, projection_module,
                          learn_proj, weighted, ski, ski_options, X=X, **kernel_kwargs)
+
+
+class StrictlyAdditiveKernel(GeneralizedPolynomialProjectionKernel):
+    """For convenience"""
+    def __init__(self, d, base_kernel, weighted=False, ski=False, ski_options=None, X=None, **kernel_kwargs):
+        projection_module = Identity()
+        super(StrictlyAdditiveKernel, self).__init__(d, 1, d, base_kernel, projection_module, learn_proj=False,
+                                             weighted=weighted, ski=ski, ski_options=ski_options,
+                                             X=X, **kernel_kwargs)
+
+
+class AdditiveKernel(GeneralizedProjectionKernel):
+    """For convenience"""
+    def __init__(self, groups, d, base_kernel, weighted=False, ski=False, ski_options=None, X=None, **kernel_kwargs):
+        class GroupFeaturesModule(nn.Module):
+            def __init__(self, groups):
+                super(GroupFeaturesModule, self).__init__()
+                order = []
+                for g in groups:
+                    order.extend(g)
+                self.order = torch.tensor(order)
+
+            def forward(self, x):
+                return torch.index_select(x, -1, self.order)
+
+        projection_module = GroupFeaturesModule(groups)
+        degrees = [len(g) for g in groups]
+        super(AdditiveKernel, self).__init__(degrees, d, base_kernel, projection_module, learn_proj=False,
+                                             weighted=weighted, ski=ski, ski_options=ski_options,
+                                             X=X, **kernel_kwargs)
 
 
 class ProjectionKernel(gpytorch.kernels.Kernel):
@@ -370,8 +428,6 @@ class ProjectionKernel(gpytorch.kernels.Kernel):
 class ExactGPModel(ExactGP):
     """Basic exact GP model with const mean and a provided kernel"""
     def __init__(self, train_x, train_y, likelihood, kernel):
-
-
         super(ExactGPModel, self).__init__(train_x, train_y, likelihood)
         self.mean_module = gpytorch.means.ConstantMean()
         self.covar_module = kernel

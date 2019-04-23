@@ -16,7 +16,8 @@ def stybtang(x: torch.Tensor):
 
 def michalewicz(x: torch.Tensor, m: int):
     d = x.shape[-1]
-    return -torch.sum(torch.sin(x) * torch.sin(d * x / pi).pow(2*m), dim=-1)
+    scaled_x = x * torch.arange(1, d+1, dtype=torch.float).unsqueeze(0)
+    return -torch.sum(torch.sin(x) * torch.sin(scaled_x / pi).pow(2*m), dim=-1)
 
 
 def mixture_of_gaussians(x: torch.Tensor, mixtures, degree, sigma):
@@ -71,12 +72,43 @@ def EI(xs, gp, best):
     t2 = cov.diag() * torch.exp(diagdist.log_prob(best))
     return t1 + t2
 
+
+def scale_to_bounds(x, bounds):
+    left = torch.tensor([b[0] for b in bounds], dtype=torch.float).unsqueeze(dim=0)
+    right = torch.tensor([b[1] for b in bounds], dtype=torch.float).unsqueeze(dim=0)
+    return x * (right - left) + left
+
+
+def quasirandom_candidates(n, bounds):
+    dim = len(bounds)
+    candX = torch.tensor(sobol_seq.i4_sobol_generate(dim, n + 1), dtype=torch.float)[1:]
+    candX = scale_to_bounds(candX, bounds)
+    return candX
+
+def random_candidates(n, bounds):
+    dim = len(bounds)
+    candX = torch.rand(n, dim)
+    candX = scale_to_bounds(candX, bounds)
+    return candX
+
+def brute_candidates(n, bounds):
+    dim = len(bounds)
+    spot_per_dim = []
+    num_per_dim = int(np.floor(np.power(n, 1 / dim)))
+    for i in range(dim):
+        spots = torch.linspace(bounds[i][0], bounds[i][1], num_per_dim + 2)[1:-1]
+        spot_per_dim.append(spots)
+    tensors = torch.meshgrid(spot_per_dim)
+    stacked = torch.stack(tensors)
+    candX = stacked.reshape(-1, dim)
+    return candX
+
 # TODO: add rescaling
 # TODO: add gradients
 # TODO: add marginalization
 class BayesOpt(object):
     def __init__(self, obj_fxn: Callable, bounds: Iterable, gp_model: gpytorch.models.GP, acq_fxn: Callable,
-                 optimizer='brute', initial_point=None, gp_optim_freq=None, gp_optim_options=None):
+                 optimizer='quasirandom', initial_point=None, gp_optim_freq=None, gp_optim_options=None):
         self.obj_fxn = obj_fxn
         self.bounds = bounds
         self.model = gp_model
@@ -122,38 +154,26 @@ class BayesOpt(object):
     def candX(self):
         if self._candX is None or self.optimizer == 'random':
             if self.optimizer == 'quasirandom':
-                candX = torch.tensor(sobol_seq.i4_sobol_generate(self._dimension, self._num_candidates+1), dtype=torch.float)[1:]
-                candX = self._scale_to_bounds(candX)
+                candX = quasirandom_candidates(self._num_candidates, self.bounds)
             elif self.optimizer == 'random':
-                candX = torch.rand(self._num_candidates, self._dimension)
-                candX = self._scale_to_bounds(candX)
+                candX = random_candidates(self._num_candidates, self.bounds)
             else:
-                spot_per_dim = []
-                num_per_dim = int(np.floor(np.power(self._num_candidates, 1 / self._dimension)))
-                for i in range(self._dimension):
-                    spots = torch.linspace(self.bounds[i][0], self.bounds[i][1], num_per_dim + 2)[1:-1]
-                    spot_per_dim.append(spots)
-                tensors = torch.meshgrid(spot_per_dim)
-                stacked = torch.stack(tensors)
-                candX = stacked.reshape(-1, self._dimension)
+                candX = brute_candidates(self._num_candidates, self.bounds)
             self._candX = candX
 
         return self._candX
 
-    def _scale_to_bounds(self, x):
-        left = torch.tensor([b[0] for b in self.bounds], dtype=torch.float).unsqueeze(dim=0)
-        right = torch.tensor([b[1] for b in self.bounds], dtype=torch.float).unsqueeze(dim=0)
-        return x*(right - left) + left
+    def _scale_to_bounds(self, x): # TODO: remove
+        return scale_to_bounds(x, self.bounds)
 
-    def step(self, **optimizer_kwargs):
-        self._evaluations = 0
+    def _maximize_acq(self, **kwargs):
         if self.optimizer not in ['brute', 'random', 'quasirandom']:
             def optim_obj(x: np.array):
                     self._evaluations += 1
                     x = torch.tensor([x], dtype=torch.float)
                     return -self.acq_fxn(x, self.model, self._best_y).item()
 
-            res = self.optimizer(optim_obj, self.bounds, **optimizer_kwargs)  # TODO: look at more options?
+            res = self.optimizer(optim_obj, self.bounds, **kwargs)  # TODO: look at more options?
         else:
             acq = self.acq_fxn(self.candX, self.model, self._best_y)
             maxidx = acq.argmax()
@@ -161,9 +181,13 @@ class BayesOpt(object):
             maxy = self.obj_fxn(maxx)
             self._candX[maxidx, :] = self._scale_to_bounds(torch.rand(1, self._dimension))
             res = scipy.optimize.OptimizeResult(x=maxx.numpy(), fun=maxy.numpy)
+        return res
 
+    def step(self, **optimizer_kwargs):
+        res = self._maximize_acq(**optimizer_kwargs)
 
         newX = torch.tensor([res.x], dtype=torch.float)
+        self._evaluations = 0
         newY = self.obj_fxn(newX)
         # print(self._evaluations)
         # newY = torch.tensor([res.fun], dtype=torch.float)
@@ -186,6 +210,73 @@ class BayesOpt(object):
             if print_:
                 print(i, self._best_y)
         return self
+
+
+class AdditiveBayesOpt(BayesOpt):
+    def __init__(self, obj_fxn, bounds, gp_model, acq_fxn, additive_components, optimizer='quasirandom',
+                 initial_point=None, gp_optim_freq=None, gp_optim_options=None):
+        super(AdditiveBayesOpt, self).__init__(obj_fxn, bounds, gp_model, acq_fxn, optimizer=optimizer,
+                                               initial_point=initial_point, gp_optim_freq=gp_optim_freq,
+                                               gp_optim_options=gp_optim_options)
+        for i in range(self._dimension):
+            ct = 0
+            for comp in self.additive_components:
+                for j in comp:
+                    if i == j:
+                        ct += 1
+            if ct > 1:
+                raise ValueError("Multiple inclusions of parameter {}".format(i))
+            elif ct < 1:
+                raise ValueError("Exclusion of parameter {}".format(i))
+
+        self.additive_components = additive_components
+        component_bounds = []
+        for comp in self.additive_components:
+            bds = []
+            for j in comp:
+                bds.append(self.bounds[j])
+            component_bounds.append(bds)
+        self._component_bounds = component_bounds
+
+    def candX(self):
+        if self._candX is None or self.optimizer == 'random':
+            candidate_sets = []
+            n_cand_per = self._num_candidates // len(self.additive_components)
+            for i, comp in self.additive_components:
+                if self.optimizer == 'quasirandom':
+                    candX = quasirandom_candidates(n_cand_per, self._component_bounds[i])
+                elif self.optimizer == 'random':
+                    candX = random_candidates(n_cand_per, self._component_bounds[i])
+                else:
+                    candX = brute_candidates(n_cand_per, self._component_bounds[i])
+                candidate_sets.append(candX)
+
+            self._candX = candidate_sets
+        return self._candX
+
+    def _maximize_acq(self, **kwargs):
+        if self.optimizer not in ['brute', 'random', 'quasirandom']:
+            raise NotImplementedError("General numerical optimizers not supported yet for additive decomposition")
+            def optim_obj(x: np.array):
+                self._evaluations += 1
+                x = torch.tensor([x], dtype=torch.float)
+                return -self.acq_fxn(x, self.model, self._best_y).item()
+
+            res = self.optimizer(optim_obj, self.bounds, **kwargs)  # TODO: look at more options?
+        else:
+            results = []
+            candidate_sets = self.candX
+            for i, comp in enumerate(self.additive_components):
+                component_cands = torch.zeros(len(candidate_sets[i]), self._dimension)
+                component_cands[:, comp] = candidate_sets[i]
+                acq = self.acq_fxn(self.candX, self.model, self._best_y)
+                maxidx = acq.argmax()
+                maxx = self.candX[maxidx]
+                maxy = self.obj_fxn(maxx)
+                self._candX[maxidx, :] = self._scale_to_bounds(torch.rand(1, self._dimension))
+                res = scipy.optimize.OptimizeResult(x=maxx.numpy(), fun=maxy.numpy)
+        return res
+
 
 if __name__ == '__main__':
     import training_routines
