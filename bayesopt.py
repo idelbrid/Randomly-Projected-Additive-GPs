@@ -53,7 +53,7 @@ def branin(x: torch.Tensor):
     return comp1 + comp2
 
 
-def EI(xs, gp, best):
+def EI(xs, gp, best, use_love=True):
     """Expected improvement function (for minimization of a function)"""
     gp.eval()
     # for i in range(len(gp.train_inputs)):
@@ -63,14 +63,24 @@ def EI(xs, gp, best):
     #         if torch.equal(gp.train_inputs[i], xs[j]):
     #             print(i, j, 'Equal')
     #             print(gp.train_inputs[i], xs[j])
-    dist = gp(xs)
-    mu = dist.mean
-    cov = dist.covariance_matrix
-    diagdist = torch.distributions.Normal(mu, cov.diag())
-    cdf = diagdist.cdf(torch.tensor([best] * len(xs)))
-    t1 = (best - mu) * cdf
-    t2 = cov.diag() * torch.exp(diagdist.log_prob(best))
-    return t1 + t2
+
+    with torch.no_grad(), gpytorch.settings.fast_pred_var(use_love):
+        dist = gp(xs)
+        mu = dist.mean
+        cov = dist.covariance_matrix
+        diagdist = torch.distributions.Normal(mu, cov.diag())
+        cdf = diagdist.cdf(torch.tensor([best] * len(xs)))
+        t1 = (best - mu) * cdf
+        t2 = cov.diag() * torch.exp(diagdist.log_prob(best))
+        return t1 + t2
+
+
+def ThompsonSampling(xs, gp, best, use_love=True):
+    gp.eval()
+    with torch.no_grad(), gpytorch.settings.fast_pred_samples(use_love):
+        dist = gp(xs)
+        samples = dist.sample()
+        return samples
 
 
 def scale_to_bounds(x, bounds):
@@ -85,11 +95,13 @@ def quasirandom_candidates(n, bounds):
     candX = scale_to_bounds(candX, bounds)
     return candX
 
+
 def random_candidates(n, bounds):
     dim = len(bounds)
     candX = torch.rand(n, dim)
     candX = scale_to_bounds(candX, bounds)
     return candX
+
 
 def brute_candidates(n, bounds):
     dim = len(bounds)
@@ -102,6 +114,7 @@ def brute_candidates(n, bounds):
     stacked = torch.stack(tensors)
     candX = stacked.reshape(-1, dim)
     return candX
+
 
 # TODO: add rescaling
 # TODO: add gradients
