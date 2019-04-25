@@ -316,17 +316,24 @@ if __name__ == '__main__':
     options['device'] = args.device
     options['skip_posterior_variances'] = args.skip_posterior_variances
 
+    try:
+        args.datasets[0] = int(args.datasets[0])
+    except Exception:
+        pass  # assume not an int
+
     if len(args.datasets) == 1:
         if args.datasets[0] == 'all':
             datasets = get_datasets()
         elif args.datasets[0] == 'small':
             datasets = get_small_datasets()
         elif args.datasets[0] == 'small-med':
-            datasets = get_datasets()[:18]  # through wine?
+            datasets = get_datasets()[:18]  # through wine
         elif args.datasets[0] == 'med':
-            datasets = get_datasets()[18:24]
+            datasets = get_datasets()[18:24]  # med through pol
         elif args.datasets[0] == 'large':
             datasets = get_datasets()[24:]
+        elif isinstance(args.datasets[0], int):
+            datasets = get_datasets()[:args.datasets[0]]
         else:
             datasets = args.datasets
     else:
