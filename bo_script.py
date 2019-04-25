@@ -2,34 +2,62 @@ import bayesopt as bo
 import torch
 import gpytorch
 import gp_models
+from training_routines import create_rp_poly_kernel
 import gp_experiment_runner
 import training_routines
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy
 from math import pi
+from scipydirect import minimize
 import pickle
 
-traj = []
-for j in range(20):
-    ys = []
-    best_ys = []
-    d = 10
-    bounds = [(-4, 4) for _ in range(d)]
-    objective_function = bo.stybtang
-    best_y = np.inf
-    for iter_ in range(200):
-        x = torch.rand(d)*8 - 4
-        y = objective_function(x)
-        ys.append(y.item())
-        if y.item() < best_y:
-            best_y = y.item()
-        best_ys.append(best_y)
-        # print(iter_, best_y)
-    traj.append(best_ys)
-with open('stybtang_random_samples.pkl', 'wb') as f:
-    pickle.dump(traj, f)
-traj = np.array(traj)
-plt.plot(traj.mean(axis=0))
-plt.fill_between(np.array(len(traj[0, :])), traj.min(axis=0), traj.max(axis=0), alpha=0.2)
-plt.show()
+def run_bo(d=10, iters=200, acq='ei', use_rp=False, repeats=5, learn_proj=False):
+    histories = []
+    for r in range(repeats):
+        bounds = [(-4, 4) for _ in range(d)]
+        if not use_rp:
+            kernel = gpytorch.kernels.RBFKernel()
+        else:
+            kernel = create_rp_poly_kernel(d, 1, d, learn_proj=learn_proj, weighted=True, space_proj=True)
+
+        kernel = gpytorch.kernels.ScaleKernel(kernel)
+        likelihood = gpytorch.likelihoods.GaussianLikelihood()
+        likelihood.initialize(noise=0.001)
+        likelihood.raw_noise.requires_grad = False
+        trainX, trainY = torch.tensor([]), torch.tensor([])
+        model = gp_models.ExactGPModel(trainX, trainY, likelihood, kernel)
+        training_options = dict(max_iter=10000, check_conv=True, lr=0.1, optimizer=torch.optim.Adam,
+                                verbose=False, patience=20, smooth=True)
+        if acq == 'ei':
+            acq_fxn = bo.EI
+        else:
+            acq_fxn = bo.ThompsonSampling
+        optimizer = bo.BayesOpt(bo.stybtang, bounds, gp_model=model, acq_fxn=acq_fxn, optimizer=minimize,
+                                initial_points=15, init_method='latin_hc', gp_optim_freq=5,
+                                gp_optim_options=training_options)
+
+        with gpytorch.settings.fast_computations(False, False):
+            optimizer.initialize()
+
+        with gpytorch.settings.fast_computations(False, False):
+            optimizer.steps(iters=iters-15, maxf=2000)
+        histories.append(optimizer._best_y_path)
+
+    return histories
+
+hist = run_bo(10, 200, 'ei', False)
+hist = np.array(hist)
+np.save('my_implementation_ei_basic_kernel.npy', hist)
+
+hist = run_bo(10, 200, 'Thompson', False)
+hist = np.array(hist)
+np.save('my_implementation_thompson_rp.npy', hist)
+
+hist = run_bo(10, 200, 'ei', True)
+hist = np.array(hist)
+np.save('my_implementation_ei_rp.npy', hist)
+
+hist = run_bo(10, 200, 'ei', True, learn_proj=True)
+hist = np.array(hist)
+np.save('my_implementation_ei_rp_learn_weights.npy', hist)
