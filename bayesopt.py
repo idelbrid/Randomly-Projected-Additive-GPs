@@ -2,22 +2,43 @@ import torch
 import gpytorch
 from math import pi
 from typing import Callable, Iterable
-# from scipydirect import minimize
 from scipy.optimize import differential_evolution
 import gp_models
 import numpy as np
-import sobol_seq
-import scipy
+from torch.quasirandom import SobolEngine
+
+
+def easy_meshgrid(sizes, numpy=False):
+    spot_per_dim = []
+    for i in range(len(sizes)):
+        spots = torch.linspace(0, 1, sizes[i] + 2)[1:-1]
+        spot_per_dim.append(spots)
+    tensors = torch.meshgrid(spot_per_dim)
+    stacked = torch.stack(tensors)
+    res = stacked.reshape(len(sizes), -1).t()
+    if numpy:
+        res = res.numpy()
+    return res
 
 
 def stybtang(x: torch.Tensor):
     return 1/2 * torch.sum(x.pow(4) - 16*x.pow(2) + 5*x, dim=-1)
 
 
+def np_stybtang(x: np.array):
+    return 1/2 * np.sum(np.power(x, 4) - 16*np.power(x, 2) + 5 * x, axis=-1)
+
+
 def michalewicz(x: torch.Tensor, m: int):
     d = x.shape[-1]
     scaled_x = x * torch.arange(1, d+1, dtype=torch.float).unsqueeze(0)
     return -torch.sum(torch.sin(x) * torch.sin(scaled_x / pi).pow(2*m), dim=-1)
+
+
+def np_michalewicz(x: np.array, m: int):
+    d = x.shape[-1]
+    scaled_x = x * np.arange(1, d+1, dtype=np.float)
+    return -np.sum(np.sin(x) * np.power(np.sin(scaled_x / pi), 2*m), axis=-1)
 
 
 def mixture_of_gaussians(x: torch.Tensor, mixtures, degree, sigma):
@@ -91,7 +112,9 @@ def scale_to_bounds(x, bounds):
 
 def quasirandom_candidates(n, bounds):
     dim = len(bounds)
-    candX = torch.tensor(sobol_seq.i4_sobol_generate(dim, n + 1), dtype=torch.float)[1:]
+    engine = SobolEngine(dim, scramble=True)
+    candX = engine.draw(n)
+    # candX = torch.tensor(sobol_seq.i4_sobol_generate(dim, n + 1), dtype=torch.float)[1:]
     candX = scale_to_bounds(candX, bounds)
     return candX
 
