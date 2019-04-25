@@ -2,7 +2,7 @@ import math
 import rp
 from gp_models import ExactGPModel, train_to_convergence, ProjectionKernel, \
     LinearRegressionModel, mean_squared_error, PolynomialProjectionKernel, DNN,\
-    GeneralizedPolynomialProjectionKernel, GeneralizedProjectionKernel
+    GeneralizedPolynomialProjectionKernel, GeneralizedProjectionKernel, StrictlyAdditiveKernel, AdditiveKernel
 import gpytorch
 from gpytorch.kernels import ScaleKernel, RBFKernel, GridInterpolationKernel
 from gpytorch.mlls import VariationalELBO, VariationalMarginalLogLikelihood
@@ -170,32 +170,24 @@ def create_rp_kernel(d, k, J, ard=False, activation=None, ski=False,
     return ProjectionKernel(J, k, d, kernels, projs, bs, activation=activation, learn_proj=learn_proj, weighted=weighted)
 
 
-def create_additive_kernel(d, ski=False, grid_size=None, weighted=False, kernel_type='RBF'):
+def create_additive_kernel(d, weighted=False, kernel_type='RBF', init_lengthscale_range=(1.0, 1.0),
+                           init_mixin_range=(1.0, 1.0),ski=False, ski_options=None, X=None):
     """Inefficient implementation of a kernel where each dimension has its own RBF subkernel."""
     # TODO: convert to using PolynomialProjectionKernel
     # TODO: add random initialization
-    k = 1
-    J = d
-    kernels = []
-    projs = []
-    bs = [torch.zeros(k) for _ in range(J)]
-    for j in range(J):
-        P = torch.zeros(d, k)
-        P[j, :] = 1
-        projs.append(P)
-        if kernel_type == 'RBF':
-            kernel = gpytorch.kernels.RBFKernel()
-        elif kernel_type == 'Matern':
-            kernel = gpytorch.kernels.MaternKernel(nu=1.5)
-        else:
-            raise ValueError("Unknown kernel type")
-        if ski:
-            kernel = gpytorch.kernels.GridInterpolationKernel(kernel,
-                                                              grid_size=grid_size,
-                                                              num_dims=k)
-        kernels.append(kernel)
-    return ProjectionKernel(J, k, d, kernels, projs, bs, activation=None,
-                            learn_proj=False, weighted=weighted)
+
+    if kernel_type == 'RBF':
+        kernel = gpytorch.kernels.RBFKernel
+        kwargs = dict()
+    elif kernel_type == 'Matern':
+        kernel = gpytorch.kernels.MaternKernel
+        kwargs = dict(nu=3/2)
+    else:
+        raise ValueError("Unknown kernel type")
+
+    kernel = StrictlyAdditiveKernel(d, kernel, weighted, ski=ski, ski_options=ski_options, X=X, **kwargs)
+    kernel.initialize(init_mixin_range, init_lengthscale_range)
+    return kernel
 
 
 def create_pca_kernel(trainX, random_projections=False, k=1, J=1, explained_variance=.99, ski=False, grid_size=None,
@@ -392,7 +384,7 @@ def create_exact_gp(trainX, trainY, kind, **kwargs):
     elif kind == 'additive':
         if ski and grid_size is None:
             grid_size = int(grid_ratio * math.pow(n, 1))
-        kernel = create_additive_kernel(d, grid_size=grid_size, **kwargs)
+        kernel = create_additive_kernel(d, X=trainX, **kwargs)
     elif kind == 'pca':
         # TODO: modify to work with PCA
         if ski and grid_size is None:

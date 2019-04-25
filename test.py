@@ -424,6 +424,7 @@ class TestStrictlyAdditiveKernel(TestCase):
         kernel = StrictlyAdditiveKernel(real_d, gpytorch.kernels.RBFKernel)
         kernel.forward(real_data, real_data)
 
+
 class TestAdditiveKernel(TestCase):
     def test_init(self):
         kernel = AdditiveKernel([[1, 2], [0, 3]], 4, gpytorch.kernels.RBFKernel)
