@@ -160,10 +160,11 @@ class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
                                                                        grid_bounds=bds, **ski_options)
                 product_kernels.append(bkernel)
                 dim_count += 1
-            if len(product_kernels) == 1:
-                product_kernel = product_kernels[0]
-            else:
-                product_kernel = gpytorch.kernels.ProductKernel(*product_kernels)
+            # TODO: re-implement this change when GPyTorch bugfix comes
+            # if len(product_kernels) == 1:
+            #     product_kernel = product_kernels[0]
+            # else:
+            product_kernel = gpytorch.kernels.ProductKernel(*product_kernels)
             if weighted:
                 product_kernel = gpytorch.kernels.ScaleKernel(product_kernel)
                 product_kernel.initialize(outputscale=1/len(component_degrees))
@@ -213,10 +214,11 @@ class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
         mixins.requires_grad = False  # todo: double check this does/doesn't make the parameter learnable
         for i, k in enumerate(self.kernel.kernels):
             k.outputscale = mixins[i]
-            if self.component_degrees[i] == 1:
-                subkernels = [k.base_kernel]
-            else:
-                subkernels = list(k.base_kernel.kernels)
+            # TODO: reimplement change when GPyTorch bugfix comes.
+            # if self.component_degrees[i] == 1:
+            #     subkernels = [k.base_kernel]
+            # else:
+            subkernels = list(k.base_kernel.kernels)
             for j, kk in enumerate(subkernels):
                 ls = _sample_from_range(1, lengthscale_range)
                 if not isinstance(kk, gpytorch.kernels.GridInterpolationKernel):
@@ -272,15 +274,6 @@ class PolynomialProjectionKernel(GeneralizedPolynomialProjectionKernel):
                          learn_proj, weighted, ski, ski_options, X=X, **kernel_kwargs)
 
 
-class StrictlyAdditiveKernel(GeneralizedPolynomialProjectionKernel):
-    """For convenience"""
-    def __init__(self, d, base_kernel, weighted=False, ski=False, ski_options=None, X=None, **kernel_kwargs):
-        projection_module = Identity()
-        super(StrictlyAdditiveKernel, self).__init__(d, 1, d, base_kernel, projection_module, learn_proj=False,
-                                             weighted=weighted, ski=ski, ski_options=ski_options,
-                                             X=X, **kernel_kwargs)
-
-
 class AdditiveKernel(GeneralizedProjectionKernel):
     """For convenience"""
     def __init__(self, groups, d, base_kernel, weighted=False, ski=False, ski_options=None, X=None, **kernel_kwargs):
@@ -297,7 +290,17 @@ class AdditiveKernel(GeneralizedProjectionKernel):
 
         projection_module = GroupFeaturesModule(groups)
         degrees = [len(g) for g in groups]
-        super(AdditiveKernel, self).__init__(degrees, d, base_kernel, projection_module, learn_proj=False,
+        super(AdditiveKernel, self).__init__(degrees, d, base_kernel, projection_module,
+                                             weighted=weighted, ski=ski, ski_options=ski_options,
+                                             X=X, **kernel_kwargs)
+
+
+class StrictlyAdditiveKernel(AdditiveKernel):
+    """For convenience"""
+    def __init__(self, d, base_kernel, weighted=False, ski=False, ski_options=None, X=None, **kernel_kwargs):
+        # projection_module = Identity()
+        groups = [[i] for i in range(d)]
+        super(StrictlyAdditiveKernel, self).__init__(groups, d, base_kernel, learn_proj=False,
                                              weighted=weighted, ski=ski, ski_options=ski_options,
                                              X=X, **kernel_kwargs)
 
@@ -436,6 +439,27 @@ class ExactGPModel(ExactGP):
         mean_x = self.mean_module(x)
         covar_x = self.covar_module(x)
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+
+    def additive_pred(self, x):  # Pretty sure this should count as a prediction strategy
+        # TODO: reminder: cover case with scale kernel
+        if not isinstance(self.covar_module, AdditiveKernel):
+            raise NotImplementedError("Only implemented for Additive kernels only")
+        train_prior_dist = self.forward(self.train_inputs[0])
+        lik_covar_train_train = self.likelihood(train_prior_dist, self.train_inputs[0]).lazy_covariance_matrix
+        # # TODO: cache?
+        # train_train_covar_inv_root = gpytorch.lazy.delazify(lik_covar_train_train.root_inv_decomposition().root)
+        # self.
+        K_inv_y = lik_covar_train_train.inv_matmul(self.train_targets)
+        outputs = []
+        for k in self.covar_module.kernel.kernels:
+            test_train_covar = gpytorch.lazy.delazify(k(x, self.train_inputs[0]))
+            test_test_covar = gpytorch.lazy.delazify(k(x, x))
+            train_test_covar = test_train_covar.transpose(-1, -2)
+            pred_mean = test_train_covar.matmul(K_inv_y)
+            pred_covar = test_test_covar - test_train_covar.matmul(lik_covar_train_train.inv_matmul(train_test_covar))
+            outputs.append(gpytorch.distributions.MultivariateNormal(pred_mean, pred_covar, validate_args=True))
+        return outputs
+
 
 
 class SVGPRegressionModel(AbstractVariationalGP):

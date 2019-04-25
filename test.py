@@ -6,6 +6,7 @@ from gp_experiment_runner import load_dataset, _normalize_by_train, _access_fold
 import torch
 import torch.nn.functional as F
 import gpytorch
+from gpytorch.kernels import RBFKernel, ScaleKernel
 import numpy as np
 import pandas as pd
 
@@ -438,6 +439,27 @@ class TestAdditiveKernel(TestCase):
         k = kernel(x).evaluate()
         k2 = kernel2(x).evaluate()
         self.assertNotAlmostEqual(k[0, 1].item(), k2[0,1].item())
+
+
+class TestAdditivePredictions(TestCase):
+    def test_additive_kernel(self):
+        kernel = StrictlyAdditiveKernel(2, RBFKernel)
+        lik = gpytorch.likelihoods.GaussianLikelihood()
+        trainX = torch.tensor([[0, 0]], dtype=torch.float)
+        trainY = torch.tensor([2], dtype=torch.float)
+        testXequi = torch.tensor([[1, 1]], dtype=torch.float)
+        testXdiff = torch.tensor([[1, 0]], dtype=torch.float)
+
+        kernel(trainX, testXdiff).evaluate()
+        model = ExactGPModel(trainX, trainY, lik, kernel)
+
+        model.eval()
+        equi_pred = model.additive_pred(testXequi)
+        diff_pred = model.additive_pred(testXdiff)
+
+        self.assertEqual(equi_pred[0].mean[0], equi_pred[1].mean[0])
+        self.assertNotEqual(diff_pred[0].mean[0], diff_pred[1].mean[0])
+
 
 
 class TestSpaceEqually(TestCase):

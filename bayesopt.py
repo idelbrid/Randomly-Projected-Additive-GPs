@@ -294,7 +294,7 @@ class BayesOpt(object):
             if print_:
                 print(i, self._best_y.item(), 'noise {:2.3f}, outputscale={:3.1f}'.format(
                     self.model.likelihood.noise.item(),
-                    self.model.covar_module.outputscale.item())
+                    self.model.covar_module.outputscale.item()))
         return self
 
 
