@@ -1,6 +1,6 @@
 from unittest import TestCase
 from gp_models import ProjectionKernel, PolynomialProjectionKernel, ExactGPModel, GeneralizedPolynomialProjectionKernel
-from gp_models import AdditiveKernel, StrictlyAdditiveKernel
+from gp_models import AdditiveKernel, StrictlyAdditiveKernel, convert_rp_model_to_additive_model
 from rp import gen_rp, space_equally
 from gp_experiment_runner import load_dataset, _normalize_by_train, _access_fold, _determine_folds
 import torch
@@ -13,6 +13,10 @@ import pandas as pd
 
 fake_data = 10+torch.randn(100, 100)*30   # 100 features, 100 points
 fake_target = torch.sin(fake_data[:, 0]) + torch.cos(fake_data[:, 1])
+
+more_fake_data = 10+torch.randn(100, 2)*30   # 2 features, 100 points
+more_fake_target = torch.sin(fake_data[:, 0]) + torch.cos(fake_data[:, 1])
+even_more_fake_data = 10+torch.randn(20, 2)*30   # 2 features, 30 points
 
 real_data = torch.Tensor(load_dataset('breastcancer').iloc[:, 1:-1].values)
 real_n, real_d = real_data.shape
@@ -440,6 +444,30 @@ class TestAdditiveKernel(TestCase):
         k2 = kernel2(x).evaluate()
         self.assertNotAlmostEqual(k[0, 1].item(), k2[0,1].item())
 
+    def test_convert_from_projection_kernel(self):
+        Ws = [torch.eye(2, 2) for _ in range(3)]
+        bs = [torch.zeros(2) for _ in range(3)]
+        kernel = PolynomialProjectionKernel(3, 2, 2, RBFKernel, Ws, bs, learn_proj=False, weighted=True)
+        likelihood = gpytorch.likelihoods.GaussianLikelihood()
+        model = ExactGPModel(more_fake_data, more_fake_target, likelihood, kernel)
+        mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
+
+        optimizer_ = torch.optim.Adam(model.parameters(), lr=0.01)
+        optimizer_.zero_grad()
+        output = model(more_fake_data)
+        loss = -mll(output, more_fake_target)
+        loss.backward()
+        optimizer_.step()
+
+        add_model, projection = convert_rp_model_to_additive_model(model, True)
+        z = projection(even_more_fake_data)
+        add_model.eval()
+        predictions = add_model(z)
+        model.eval()
+        expected_predictions = model(even_more_fake_data)
+        self.assertListEqual(predictions.mean.tolist(), expected_predictions.mean.tolist())
+
+
 
 class TestAdditivePredictions(TestCase):
     def test_additive_kernel(self):
@@ -460,6 +488,61 @@ class TestAdditivePredictions(TestCase):
         self.assertEqual(equi_pred[0].mean[0], equi_pred[1].mean[0])
         self.assertNotEqual(diff_pred[0].mean[0], diff_pred[1].mean[0])
 
+        combined = diff_pred[0] + diff_pred[1]
+        total = model(testXdiff)
+        self.assertEqual(combined.mean, total.mean)
+        # self.assertEqual(combined.covariance_matrix, total.covariance_matrix)
+
+        testXlarger = torch.tensor([[1, 0], [1.1, 1.2]], dtype=torch.float)
+        pred_larger = model.additive_pred(testXlarger)
+
+        trainX = torch.rand(200, 10, dtype=torch.float)
+        trainY = torch.sin(trainX[:, 0]) + torch.sin(trainX[:, 1]) + torch.randn(200, dtype=torch.float) * 0.5
+        kernel = StrictlyAdditiveKernel(2, RBFKernel)
+        lik = gpytorch.likelihoods.GaussianLikelihood().to(dtype=torch.float)
+        kernel = kernel.to(dtype=torch.float)
+        model = ExactGPModel(trainX, trainY, lik, kernel)
+        testXmuchlarger = torch.rand(2000, 10, dtype=torch.float)
+        preds = model.additive_pred(testXmuchlarger)
+        for p in preds:
+            p.sample(torch.Size([1]))
+
+    def test_scale_kernel(self):
+        kernel = ScaleKernel(StrictlyAdditiveKernel(2, RBFKernel))
+        lik = gpytorch.likelihoods.GaussianLikelihood()
+        trainX = torch.tensor([[0, 0]], dtype=torch.float)
+        trainY = torch.tensor([2], dtype=torch.float)
+        testXequi = torch.tensor([[1, 1]], dtype=torch.float)
+        testXdiff = torch.tensor([[1, 0]], dtype=torch.float)
+
+        kernel(trainX, testXdiff).evaluate()
+        model = ExactGPModel(trainX, trainY, lik, kernel)
+
+        model.eval()
+        equi_pred = model.additive_pred(testXequi)
+        diff_pred = model.additive_pred(testXdiff)
+
+        self.assertEqual(equi_pred[0].mean[0], equi_pred[1].mean[0])
+        self.assertNotEqual(diff_pred[0].mean[0], diff_pred[1].mean[0])
+
+        combined = diff_pred[0] + diff_pred[1]
+        total = model(testXdiff)
+        self.assertEqual(combined.mean, total.mean)
+        # self.assertEqual(combined.covariance_matrix, total.covariance_matrix)
+
+        testXlarger = torch.tensor([[1, 0], [1.1, 1.2]], dtype=torch.float)
+        pred_larger = model.additive_pred(testXlarger)
+
+        trainX = torch.rand(200, 10, dtype=torch.float)
+        trainY = torch.sin(trainX[:, 0]) + torch.sin(trainX[:, 1]) + torch.randn(200, dtype=torch.float) * 0.5
+        kernel = ScaleKernel(StrictlyAdditiveKernel(2, RBFKernel))
+        lik = gpytorch.likelihoods.GaussianLikelihood().to(dtype=torch.float)
+        kernel = kernel.to(dtype=torch.float)
+        model = ExactGPModel(trainX, trainY, lik, kernel)
+        testXmuchlarger = torch.rand(2000, 10, dtype=torch.float)
+        preds = model.additive_pred(testXmuchlarger)
+        for p in preds:
+            p.sample(torch.Size([1]))
 
 
 class TestSpaceEqually(TestCase):

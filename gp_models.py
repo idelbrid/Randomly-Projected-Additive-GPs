@@ -16,6 +16,24 @@ def _sample_from_range(num_samples, range_):
     return torch.rand(num_samples) * (range_[1] - range_[0]) + range_[0]
 
 
+def convert_rp_model_to_additive_model(model, return_proj=True):
+    if isinstance(model.covar_module, gpytorch.kernels.ScaleKernel):
+        rp_kernel = model.covar_module.kernel
+    else:
+        rp_kernel = model.covar_module
+    add_kernel = rp_kernel.to_additive_kernel()
+    proj = rp_kernel.projection_module
+    if isinstance(model.covar_module, gpytorch.kernels.ScaleKernel):
+        add_kernel = gpytorch.kernels.ScaleKernel(add_kernel)
+        add_kernel.initialize(outputscale=model.covar_module.outputscale)
+    Z = rp_kernel.projection_module(model.train_inputs[0])
+    res = ExactGPModel(Z, model.train_targets, model.likelihood, add_kernel)
+    res.mean_module = model.mean_module  # either zero or constant, so doesn't matter if the input is projected.
+    if return_proj:
+        res = (res, proj)
+    return res
+
+
 class DNN(torch.nn.Module):
     """Note: linear output"""
     def __init__(self, input_dim, output_dim, hidden_layer_sizes, nonlinearity='relu', output_activation='linear',
@@ -119,6 +137,7 @@ class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
         self.projection_module = projection_module
         self.ski = ski
         self.ski_options = ski_options
+        self.base_kernel = base_kernel
 
         # Manually set projection parameters' requires_grad attribute to False if we don't want to learn it.
         if not self.learn_proj:
@@ -176,6 +195,7 @@ class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
         kernel = gpytorch.kernels.AdditiveKernel(*kernels)
 
         self.kernel = kernel
+        self.kernel_kwargs = kernel_kwargs
         self.d = d
         self.component_degrees = component_degrees
         self.J = len(component_degrees)
@@ -245,6 +265,25 @@ class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
                     kk.grid_is_dynamic = not mode
                     # print('Setting dynamic {}'.format(not mode))
         return super(GeneralizedProjectionKernel, self).train(mode=mode)
+
+    def to_additive_kernel(self):
+        ct = 0
+        groups = []
+        for d in self.component_degrees:
+            g = []
+            for _ in range(d):
+                g.append(ct)
+                ct += 1
+            groups.append(g)
+
+        if self.cached_projections is not None:
+            Z = self.cached_projections
+        else:
+            Z = None
+        res = AdditiveKernel(groups, self.d, self.base_kernel, self.weighted,
+                              self.ski, self.ski_options, X=Z, **self.kernel_kwargs)
+        res.kernel = self.kernel  # just use the same object. Probably not a good long-term solution.
+        return res
 
 # TODO: make sure this works right
 # TODO: implement mixtures of products via kernel powers (log(K) ~ a log(k1) + b log(k2) -> K ~ k1^a * k2^b
@@ -441,23 +480,31 @@ class ExactGPModel(ExactGP):
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
 
     def additive_pred(self, x):  # Pretty sure this should count as a prediction strategy
-        # TODO: reminder: cover case with scale kernel
-        if not isinstance(self.covar_module, AdditiveKernel):
-            raise NotImplementedError("Only implemented for Additive kernels only")
+        # TODO: implement somehow for RP models as well.
+        if isinstance(self.covar_module, gpytorch.kernels.ScaleKernel):
+            scale = self.covar_module.outputscale
+            add_kernel = self.covar_module.base_kernel
+        elif isinstance(self.covar_module,  AdditiveKernel):
+            scale = torch.tensor(1.0, dtype=torch.float)
+            add_kernel = self.covar_module
+        else:
+            raise NotImplementedError("Only implemented for Additive kernels and Scale kernel wrappings only")
         train_prior_dist = self.forward(self.train_inputs[0])
-        lik_covar_train_train = self.likelihood(train_prior_dist, self.train_inputs[0]).lazy_covariance_matrix
+        lik_covar_train_train = self.likelihood(train_prior_dist, self.train_inputs[0]).lazy_covariance_matrix.detach()
         # # TODO: cache?
         # train_train_covar_inv_root = gpytorch.lazy.delazify(lik_covar_train_train.root_inv_decomposition().root)
         # self.
         K_inv_y = lik_covar_train_train.inv_matmul(self.train_targets)
         outputs = []
-        for k in self.covar_module.kernel.kernels:
-            test_train_covar = gpytorch.lazy.delazify(k(x, self.train_inputs[0]))
-            test_test_covar = gpytorch.lazy.delazify(k(x, x))
+        for k in add_kernel.kernel.kernels:
+            # is there a better way to handle the scalings?
+            test_train_covar = scale * gpytorch.lazy.delazify(k(x, self.train_inputs[0]))
+            test_test_covar = scale * gpytorch.lazy.delazify(k(x, x))
             train_test_covar = test_train_covar.transpose(-1, -2)
             pred_mean = test_train_covar.matmul(K_inv_y)
-            pred_covar = test_test_covar - test_train_covar.matmul(lik_covar_train_train.inv_matmul(train_test_covar))
-            outputs.append(gpytorch.distributions.MultivariateNormal(pred_mean, pred_covar, validate_args=True))
+            covar_correction_rhs = lik_covar_train_train.inv_matmul(train_test_covar)
+            pred_covar = lazify(torch.addmm(1, test_test_covar, -1, test_train_covar, covar_correction_rhs))
+            outputs.append(gpytorch.distributions.MultivariateNormal(pred_mean, pred_covar, validate_args=False))
         return outputs
 
 
