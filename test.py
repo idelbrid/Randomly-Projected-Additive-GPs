@@ -419,7 +419,7 @@ class TestStrictlyAdditiveKernel(TestCase):
     def test_init(self):
         kernel = StrictlyAdditiveKernel(real_d, gpytorch.kernels.RBFKernel)
         self.assertIsInstance(kernel.kernel, gpytorch.kernels.AdditiveKernel)
-        self.assertIsInstance(kernel.kernel.kernels[0].base_kernel, gpytorch.kernels.RBFKernel)
+        self.assertIsInstance(kernel.kernel.kernels[0].base_kernel.kernels[0], gpytorch.kernels.RBFKernel)
 
     def test_initialize(self):
         kernel = StrictlyAdditiveKernel(real_d, gpytorch.kernels.RBFKernel)
