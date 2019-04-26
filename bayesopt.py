@@ -82,11 +82,12 @@ def EI(xs, gp, best, use_love=False):
     with torch.no_grad(), gpytorch.settings.fast_pred_var(use_love):
         dist = gp(xs)
         mu = dist.mean
-        cov = dist.covariance_matrix
-        diagdist = torch.distributions.Normal(mu, cov.diag())
+        var = dist.variance
+        # diagdist = torch.distributions.Normal(mu, cov.diag())
+        diagdist = torch.distributions.Normal(mu, var)
         cdf = diagdist.cdf(torch.tensor([best] * len(xs)))
         t1 = (best - mu) * cdf
-        t2 = cov.diag() * torch.exp(diagdist.log_prob(best))
+        t2 = var * torch.exp(diagdist.log_prob(best))
         return t1 + t2
 
 
@@ -98,12 +99,20 @@ def ThompsonSampling(xs, gp, best, use_love=False):
     return -samples
 
 
-# TODO: implement UCB, Add-UCB, and Add-EI
-# TODO: implement latin hypercube sampling
-# TODO: move to initialize with ~10 samples from latin hypercube
-# TODO: move to updating only every so often, and to construct entirely new GP at that time.
-# TODO: move to using DIRect
-# TODO: include native scaling of the GP
+def UCB(xs, gp, best, use_love=False):
+    # Adapted from Kandasamy's Dragonfly as well.
+    timestep, dim = gp.train_inputs[0].shape
+    beta = np.sqrt(0.5 * dim * np.log(2 * dim * timestep + 1))
+    with torch.no_grad(), gpytorch.settings.fast_pred_var(use_love):
+        dist = gp(xs)
+        mu = dist.mean
+        var = dist.variance
+    return mu + beta * var
+
+
+# TODO: implement Add-UCB, and Add-EI
+# TODO: move to construct entirely new GP at that time.
+# TODO: include native scaling of the GP's Ys
 # TODO: implement neat .save function to make this shit easier to document.
 
 
@@ -156,6 +165,7 @@ def _latin_hc_indices(dim, num_samples):
     lhs_indices.append(curr_idx)
   return lhs_indices
 
+
 def latin_hc_sampling(dim, num_samples):
   """ Latin Hyper-cube sampling in the unit hyper-cube. """
   if num_samples == 0:
@@ -181,13 +191,19 @@ def latin_hc_sampling(dim, num_samples):
 # TODO: add gradients
 # TODO: add marginalization
 class BayesOpt(object):
-    def __init__(self, obj_fxn: Callable, bounds: Iterable, gp_model: gpytorch.models.GP, acq_fxn: Callable,
+    def __init__(self, obj_fxn: Callable, bounds: Iterable, gp_model: gpytorch.models.GP, acq_fxn: str,
                  optimizer='quasirandom', initial_points=10, init_method='latin_hc', gp_optim_freq=None,
                  gp_optim_options=None):
         self.obj_fxn = obj_fxn
         self.bounds = bounds
         self.model = gp_model
-        self.acq_fxn = acq_fxn
+        self._acq_fxn_name = acq_fxn
+        if self._acq_fxn_name.lower().startswith('ei'):
+            self.acq_fxn = EI
+        elif self._acq_fxn_name.lower().startswith('thompson'):
+            self.acq_fxn = ThompsonSampling
+        elif self._acq_fxn_name.lower().startswith('ucb'):
+            self.acq_fxn = UCB
         self.optimizer = optimizer
         self._dimension = len(bounds)
         self._initial_points = initial_points
@@ -367,6 +383,7 @@ class BayesOpt(object):
 if __name__ == '__main__':
     import training_routines
     import scipy
+    from scipydirect import minimize
     d = 10
     bounds = [(-4, 4) for _ in range(d)]
     objective_function = stybtang
@@ -381,11 +398,12 @@ if __name__ == '__main__':
     lik.initialize(noise=0.01)
     lik.raw_noise.requires_grad = False
     model = gp_models.ExactGPModel(trainX, trainY, lik, kernel)
-    inner_optimizer = 'quasirandom'
+    inner_optimizer = minimize
     gp_optim_options = dict(max_iter=15, optimizer=torch.optim.Adam, verbose=False, lr=0.1, check_conv=False)
 
-    optimizer = BayesOpt(objective_function, bounds, model, EI, inner_optimizer,
+    optimizer = BayesOpt(objective_function, bounds, model, 'ucb', inner_optimizer,
                             gp_optim_freq=1, gp_optim_options=gp_optim_options)
 
     with gpytorch.settings.lazily_evaluate_kernels(True):
-        optimizer.steps(20)
+        optimizer.initialize()
+        optimizer.steps(20, maxf=2000)
