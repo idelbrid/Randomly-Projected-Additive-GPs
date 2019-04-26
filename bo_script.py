@@ -42,7 +42,7 @@ def run_bo(d=10, iters=200, acq='ei', use_rp=False, repeats=5, learn_proj=False)
 
         with gpytorch.settings.fast_computations(False, False):
             optimizer.steps(iters=iters-15, maxf=2000)
-        histories.append(optimizer._best_y_path)
+        histories.append(optimizer.true_best_y_path)
 
     return histories
 
