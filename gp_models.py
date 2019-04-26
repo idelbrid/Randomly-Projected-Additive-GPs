@@ -332,6 +332,7 @@ class AdditiveKernel(GeneralizedProjectionKernel):
         super(AdditiveKernel, self).__init__(degrees, d, base_kernel, projection_module,
                                              weighted=weighted, ski=ski, ski_options=ski_options,
                                              X=X, **kernel_kwargs)
+        self.groups = groups
 
 
 class StrictlyAdditiveKernel(AdditiveKernel):
@@ -479,7 +480,18 @@ class ExactGPModel(ExactGP):
         covar_x = self.covar_module(x)
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
 
-    def additive_pred(self, x):  # Pretty sure this should count as a prediction strategy
+
+class AdditiveExactGPModel(ExactGPModel):
+    def __init__(self, train_x, train_y, likelihood, kernel):
+        if isinstance(kernel, gpytorch.kernels.ScaleKernel):
+            if not isinstance(kernel.base_kernel, AdditiveKernel):
+                raise ValueError("Not an additive kernel.")
+        else:
+            if not isinstance(kernel, AdditiveKernel):
+                raise ValueError("Not an additive kernel.")
+        super(AdditiveExactGPModel, self).__init__(train_x, train_y, likelihood, kernel)
+
+    def additive_pred(self, x, group=None):  # Pretty sure this should count as a prediction strategy
         # TODO: implement somehow for RP models as well.
         if isinstance(self.covar_module, gpytorch.kernels.ScaleKernel):
             scale = self.covar_module.outputscale
@@ -491,12 +503,11 @@ class ExactGPModel(ExactGP):
             raise NotImplementedError("Only implemented for Additive kernels and Scale kernel wrappings only")
         train_prior_dist = self.forward(self.train_inputs[0])
         lik_covar_train_train = self.likelihood(train_prior_dist, self.train_inputs[0]).lazy_covariance_matrix.detach()
-        # # TODO: cache?
-        # train_train_covar_inv_root = gpytorch.lazy.delazify(lik_covar_train_train.root_inv_decomposition().root)
-        # self.
+
+        # TODO: cache?
         K_inv_y = lik_covar_train_train.inv_matmul(self.train_targets)
-        outputs = []
-        for k in add_kernel.kernel.kernels:
+
+        def get_pred(k):
             # is there a better way to handle the scalings?
             test_train_covar = scale * gpytorch.lazy.delazify(k(x, self.train_inputs[0]))
             test_test_covar = scale * gpytorch.lazy.delazify(k(x, x))
@@ -504,8 +515,23 @@ class ExactGPModel(ExactGP):
             pred_mean = test_train_covar.matmul(K_inv_y)
             covar_correction_rhs = lik_covar_train_train.inv_matmul(train_test_covar)
             pred_covar = lazify(torch.addmm(1, test_test_covar, -1, test_train_covar, covar_correction_rhs))
-            outputs.append(gpytorch.distributions.MultivariateNormal(pred_mean, pred_covar, validate_args=False))
-        return outputs
+            return gpytorch.distributions.MultivariateNormal(pred_mean, pred_covar, validate_args=False)
+
+        if group is None:
+            outputs = []
+            for k in add_kernel.kernel.kernels:
+                outputs.append(get_pred(k))
+            return outputs
+        else:
+            return get_pred(add_kernel.kernel.kernels[group])
+
+    def get_groups(self):
+        if isinstance(self.covar_module, gpytorch.kernels.ScaleKernel):
+            add_kernel = self.covar_module.base_kernel
+        else:
+            add_kernel = self.covar_module
+        return add_kernel.groups
+
 
 
 
