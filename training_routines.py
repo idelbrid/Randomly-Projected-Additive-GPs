@@ -238,7 +238,7 @@ def create_multi_full_kernel(d, J, ard=False, ski=False, grid_size=None, kernel_
                                                     init_lengthscale_range=init_lengthscale_range))
         new_kernel.initialize(outputscale=outputscales[j])
         subkernels.append(new_kernel)
-    return gpytorch.kernels.AdditiveKernel(subkernels)
+    return gpytorch.kernels.AdditiveKernel(*subkernels)
 
 
 def create_pca_kernel(trainX, random_projections=False, k=1, J=1, explained_variance=.99, ski=False, grid_size=None,
