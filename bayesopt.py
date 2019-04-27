@@ -351,9 +351,11 @@ class BayesOpt(object):
     def _maximize_projected_additive_acq(self, **kwargs):
         opt_model, proj = self.model.get_corresponding_additive_model(return_proj=True)
         # Assuming the projection is linear
-        b = torch.clamp(proj.weight, min=0).sum(dim=1)
-        a = torch.clamp(proj.weight, max=0).sum(dim=1)
-        opt_dim = proj.weight.shape[1]
+        # NB: torch.nn.Linear(n,m).weight is an m x n matrix. So it's the transpose of the matrix we're trying to use.
+        with torch.no_grad():
+            b = torch.clamp(proj.weight, min=0).sum(dim=1)
+            a = torch.clamp(proj.weight, max=0).sum(dim=1)
+            opt_dim = proj.weight.shape[1]
         bounds = [[a[i], b[i]] for i in range(len(a))]
 
         # TODO: instead of copying code actually write re-usable code.
@@ -382,8 +384,10 @@ class BayesOpt(object):
                 group_results.append(group_res)
 
         z_results = aggregate_results(group_results, opt_dim, opt_model.get_groups())
-        z = z_results.x
-        x = z.matmul(torch.inverse(proj.weight))
+        with torch.no_grad():
+            z = z_results.x
+            x = z.matmul(torch.inverse(proj.weight.t()))
+            # NB: torch.nn.Linear(n,m).weight is an m x n matrix. So it's the transpose of the matrix we're trying to use.
         z_results.z = z
         z_results.x = x
         return z_results
@@ -458,7 +462,7 @@ if __name__ == '__main__':
     import training_routines
     import scipy
     from scipydirect import minimize as DIRectMinimize
-    d = 2
+    d = 10
     bounds = [(-4, 4) for _ in range(d)]
     def objective_function(x):
         print('queries x=', x)
@@ -474,7 +478,7 @@ if __name__ == '__main__':
 
     # kernel = training_routines.create_general_rp_poly_kernel(10, [1 for _ in range(d)], learn_proj=False,
     #                                                          kernel_type='Matern', weighted=True)
-    kernel = training_routines.create_rp_poly_kernel(d, 1, d, None, learn_proj=False, weighted=False,
+    kernel = training_routines.create_rp_poly_kernel(d, 1, d, None, learn_proj=True, weighted=True,
                                                      kernel_type='RBF', space_proj=True)
     # kernel = training_routines.create_full_kernel(d, ard=True, kernel_type='Matern')
     # kernel = training_routines.create_additive_kernel(d, kernel_type='Matern')

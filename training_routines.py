@@ -108,7 +108,7 @@ def create_general_rp_poly_kernel(d, degrees, learn_proj=False, weighted=False, 
     out_dim = sum(degrees)
     W = torch.cat([rp.gen_rp(d, 1) for _ in range(out_dim)], dim=1).t()
     b = torch.zeros(out_dim)
-    projection_module = torch.nn.Linear(d, out_dim)
+    projection_module = torch.nn.Linear(d, out_dim, bias=False)
     projection_module.weight = torch.nn.Parameter(W)
     projection_module.bias = torch.nn.Parameter(b)
     if kernel_type == 'RBF':

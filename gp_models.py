@@ -303,7 +303,7 @@ class PolynomialProjectionKernel(GeneralizedPolynomialProjectionKernel):
                  learn_proj=False, weighted=False,  ski=False, ski_options=None, X=None, **kernel_kwargs):
         if activation is not None:
             raise ValueError("activation not supported through the normal projection interface. Use the GeneralPolynomialProjectionKernel instead.")
-        projection_module = torch.nn.Linear(d, J*k)
+        projection_module = torch.nn.Linear(d, J*k, bias=False)
         W = torch.nn.Parameter(torch.cat(Ws, dim=1).t())
         b = torch.nn.Parameter(torch.cat(bs, dim=0))
         projection_module.weight = W
