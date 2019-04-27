@@ -4,16 +4,19 @@ from math import pi
 from typing import Callable, Iterable
 from scipy.optimize import differential_evolution
 import gp_models
-from gp_models import AdditiveKernel, AdditiveExactGPModel, StrictlyAdditiveKernel
+from gp_models import AdditiveKernel, AdditiveExactGPModel, StrictlyAdditiveKernel, ProjectedAdditiveExactGPModel
 import numpy as np
 from torch.quasirandom import SobolEngine
 import scipy
 
 
-def easy_meshgrid(sizes, numpy=False):
+def easy_meshgrid(sizes, numpy=False, interior=True):
     spot_per_dim = []
     for i in range(len(sizes)):
-        spots = torch.linspace(0, 1, sizes[i] + 2)[1:-1]
+        if interior:
+            spots = torch.linspace(0, 1, sizes[i] + 2)[1:-1]
+        else:
+            spots = torch.linspace(0, 1, sizes[i])
         spot_per_dim.append(spots)
     tensors = torch.meshgrid(spot_per_dim)
     stacked = torch.stack(tensors)
@@ -210,6 +213,17 @@ def latin_hc_sampling(dim, num_samples):
   return lhs_samples
 
 
+def aggregate_results(group_results, dimension, groups):
+    # assume additive decomposition of the acquisition function
+    actual_x = torch.empty(1, dimension, dtype=torch.float)
+    actual_acq = 0
+    for i, group in enumerate(groups):
+        actual_acq += group_results[i].fun
+        for j, index in enumerate(group):
+            actual_x[:, index] = group_results[i].x[j]
+    return scipy.optimize.OptimizeResult(x=actual_x, fun=actual_acq)
+
+
 # TODO: add gradients
 # TODO: add marginalization
 class BayesOpt(object):
@@ -226,7 +240,7 @@ class BayesOpt(object):
             self.acq_fxn = ThompsonSampling
         elif self._acq_fxn_name.lower().startswith('ucb'):
             self.acq_fxn = UCB
-        elif self._acq_fxn_name == 'add_ucb':
+        elif self._acq_fxn_name.lower().startswith('add_ucb'):
             self.acq_fxn = surrogate_AddUCB
         self.optimizer = optimizer
         self._dimension = len(bounds)
@@ -247,9 +261,6 @@ class BayesOpt(object):
 
     def descale_y(self, y):
         return y / self._obsY_std
-
-    # def rescale_y(self, y):
-    #     return y * self._obsY_std
 
     def initialize(self):
         if self._init_method == 'random':
@@ -337,7 +348,48 @@ class BayesOpt(object):
             res = scipy.optimize.OptimizeResult(x=max_x, fun=max_acq)
         return res
 
+    def _maximize_projected_additive_acq(self, **kwargs):
+        opt_model, proj = self.model.get_corresponding_additive_model(return_proj=True)
+        # Assuming the projection is linear
+        b = torch.clamp(proj.weight, min=0).sum(dim=1)
+        a = torch.clamp(proj.weight, max=0).sum(dim=1)
+        opt_dim = proj.weight.shape[1]
+        bounds = [[a[i], b[i]] for i in range(len(a))]
+
+        # TODO: instead of copying code actually write re-usable code.
+        if self.optimizer not in ['brute', 'random', 'quasirandom']:
+            group_results = []
+
+            for i, group in enumerate(opt_model.get_groups()):
+                group_bounds = [bounds[i] for i in group]
+                def optim_obj(x: np.array):
+                    x = torch.tensor([x], dtype=torch.float)
+                    return -self.acq_fxn(x, opt_model, i).item() #  a surrogate actually
+                group_res = self.optimizer(optim_obj, group_bounds, **kwargs)
+                group_res.x = torch.tensor([group_res.x])
+                group_results.append(group_res)
+        else:
+            group_results = []
+            for i, group in enumerate(opt_model.get_groups()):
+                group_bounds = [bounds[i] for i in group]
+                cands = self.candX(dim=len(group))
+                cands = scale_to_bounds(cands, group_bounds)
+                group_acq = self.acq_fxn(cands, opt_model, i)
+                max_idx = group_acq.argmax()
+                max_x = cands[max_idx]
+                max_acq = group_acq[max_idx]
+                group_res = scipy.optimize.OptimizeResult(x=max_x, fun=max_acq)
+                group_results.append(group_res)
+
+        z_results = aggregate_results(group_results, opt_dim, opt_model.get_groups())
+        z = z_results.x
+        x = z.matmul(torch.inverse(proj.weight))
+        z_results.z = z
+        z_results.x = x
+        return z_results
+
     def _maximize_additive_acq(self, **kwargs):
+
         if self.optimizer not in ['brute', 'random', 'quasirandom']:
             group_results = []
             for i, group in enumerate(self.model.get_groups()):
@@ -358,20 +410,17 @@ class BayesOpt(object):
                 max_acq = group_acq[max_idx]
                 group_res = scipy.optimize.OptimizeResult(x=max_x, fun=max_acq)
                 group_results.append(group_res)
-        # assume additive decomposition of the acquisition function
-        actual_x = torch.empty(1, self._dimension, dtype=torch.float)
-        actual_acq = 0
-        for i, group in enumerate(self.model.get_groups()):
-            actual_acq += group_results[i].fun
-            for j, index in enumerate(group):
-                actual_x[:, index] = group_results[i].x[j]
-        return scipy.optimize.OptimizeResult(x=actual_x, fun=actual_acq)
+
+        return aggregate_results(group_results, self._dimension, self.model.get_groups())
 
     def _maximize_acq(self, **kwargs):
         if not self._acq_fxn_name.lower().startswith('add'):
             return self._maximize_nonadditive_acq(**kwargs)
         else:
-            return self._maximize_additive_acq(**kwargs)
+            if isinstance(self.model, AdditiveExactGPModel):
+                return self._maximize_additive_acq(**kwargs)
+            else:
+                return self._maximize_projected_additive_acq(**kwargs)
 
     def step(self, **optimizer_kwargs):
         if not self._initialized:
@@ -409,30 +458,34 @@ if __name__ == '__main__':
     import training_routines
     import scipy
     from scipydirect import minimize as DIRectMinimize
-    d = 10
+    d = 2
     bounds = [(-4, 4) for _ in range(d)]
     def objective_function(x):
         print('queries x=', x)
         res = stybtang(x)
         print('Obtained', res)
         return res
-    # kernel = training_routines.create_general_rp_poly_kernel(10, [1, 1, 1, 2, 2, 3], learn_proj=False,
-    #                                                          kernel_type='Matern')
-    # kernel = training_routines.create_full_kernel(d, ard=True, kernel_type='Matern')
-    kernel = training_routines.create_additive_kernel(d, kernel_type='Matern')
-    kernel = gpytorch.kernels.ScaleKernel(kernel)
 
     trainX = torch.tensor([], dtype=torch.float)
     trainY = torch.tensor([], dtype=torch.float)
     lik = gpytorch.likelihoods.GaussianLikelihood()
     lik.initialize(noise=0.01)
     lik.raw_noise.requires_grad = False
-    model = AdditiveExactGPModel(trainX, trainY, lik, kernel)
+
+    # kernel = training_routines.create_general_rp_poly_kernel(10, [1 for _ in range(d)], learn_proj=False,
+    #                                                          kernel_type='Matern', weighted=True)
+    kernel = training_routines.create_rp_poly_kernel(d, 1, d, None, learn_proj=False, weighted=False,
+                                                     kernel_type='RBF', space_proj=True)
+    # kernel = training_routines.create_full_kernel(d, ard=True, kernel_type='Matern')
+    # kernel = training_routines.create_additive_kernel(d, kernel_type='Matern')
+    kernel = gpytorch.kernels.ScaleKernel(kernel)
+    # model = AdditiveExactGPModel(trainX, trainY, lik, kernel)
+    model = ProjectedAdditiveExactGPModel(trainX, trainY, lik, kernel)
     inner_optimizer = 'quasirandom'
     gp_optim_options = dict(max_iter=20, optimizer=torch.optim.Adam, verbose=False, lr=0.1, check_conv=False)
 
     optimizer = BayesOpt(objective_function, bounds, model, 'add_ucb', inner_optimizer,
-                            gp_optim_freq=5, gp_optim_options=gp_optim_options, )
+                            gp_optim_freq=5, gp_optim_options=gp_optim_options, initial_points=10)
 
     with gpytorch.settings.lazily_evaluate_kernels(True):
         optimizer.initialize()

@@ -18,7 +18,7 @@ def _sample_from_range(num_samples, range_):
 
 def convert_rp_model_to_additive_model(model, return_proj=True):
     if isinstance(model.covar_module, gpytorch.kernels.ScaleKernel):
-        rp_kernel = model.covar_module.kernel
+        rp_kernel = model.covar_module.base_kernel
     else:
         rp_kernel = model.covar_module
     add_kernel = rp_kernel.to_additive_kernel()
@@ -27,7 +27,7 @@ def convert_rp_model_to_additive_model(model, return_proj=True):
         add_kernel = gpytorch.kernels.ScaleKernel(add_kernel)
         add_kernel.initialize(outputscale=model.covar_module.outputscale)
     Z = rp_kernel.projection_module(model.train_inputs[0])
-    res = ExactGPModel(Z, model.train_targets, model.likelihood, add_kernel)
+    res = AdditiveExactGPModel(Z, model.train_targets, model.likelihood, add_kernel)
     res.mean_module = model.mean_module  # either zero or constant, so doesn't matter if the input is projected.
     if return_proj:
         res = (res, proj)
@@ -327,6 +327,13 @@ class AdditiveKernel(GeneralizedProjectionKernel):
             def forward(self, x):
                 return torch.index_select(x, -1, self.order)
 
+            @property
+            def weight(self):
+                M = torch.zeros(d, d)
+                for i, g in enumerate(self.order):
+                    M[i, g] = 1
+                return M
+
         projection_module = GroupFeaturesModule(groups)
         degrees = [len(g) for g in groups]
         super(AdditiveKernel, self).__init__(degrees, d, base_kernel, projection_module,
@@ -533,6 +540,18 @@ class AdditiveExactGPModel(ExactGPModel):
         return add_kernel.groups
 
 
+class ProjectedAdditiveExactGPModel(ExactGPModel):
+    def __init__(self, train_x, train_y, likelihood, kernel):
+        if isinstance(kernel, gpytorch.kernels.ScaleKernel):
+            if not isinstance(kernel.base_kernel, GeneralizedProjectionKernel):
+                raise ValueError("Not an projected additive kernel.")
+        else:
+            if not isinstance(kernel, GeneralizedProjectionKernel):
+                raise ValueError("Not an projected additive kernel.")
+        super(ProjectedAdditiveExactGPModel, self).__init__(train_x, train_y, likelihood, kernel)
+
+    def get_corresponding_additive_model(self, return_proj=True):
+        return convert_rp_model_to_additive_model(self, return_proj=return_proj)
 
 
 class SVGPRegressionModel(AbstractVariationalGP):
