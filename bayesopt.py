@@ -7,6 +7,7 @@ import gp_models
 from gp_models import AdditiveKernel, AdditiveExactGPModel, StrictlyAdditiveKernel, ProjectedAdditiveExactGPModel
 import numpy as np
 from torch.quasirandom import SobolEngine
+import rp
 import scipy
 
 
@@ -479,7 +480,8 @@ if __name__ == '__main__':
     # kernel = training_routines.create_general_rp_poly_kernel(10, [1 for _ in range(d)], learn_proj=False,
     #                                                          kernel_type='Matern', weighted=True)
     kernel = training_routines.create_rp_poly_kernel(d, 1, d, None, learn_proj=True, weighted=True,
-                                                     kernel_type='RBF', space_proj=True)
+                                                     kernel_type='RBF', space_proj=False)
+    kernel.projection_module.weight.data = rp.gen_rp(d, d)
     # kernel = training_routines.create_full_kernel(d, ard=True, kernel_type='Matern')
     # kernel = training_routines.create_additive_kernel(d, kernel_type='Matern')
     kernel = gpytorch.kernels.ScaleKernel(kernel)

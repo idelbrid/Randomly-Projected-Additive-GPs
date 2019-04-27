@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 from math import sqrt
-
+from torch.distributions import Categorical
 
 def gen_rp(d, k, dist='gaussian'):
     """Generate a random projection matrix (input dim d output dim k)"""
@@ -14,6 +14,11 @@ def gen_rp(d, k, dist='gaussian'):
         # variance of w drawn uniformly from unit sphere is
         # 1/d
         return W * sqrt(d) / sqrt(k)
+    elif dist == 'very-sparse':
+        categorical = Categorical(torch.tensor([1/(2 * sqrt(d)), 1-1/sqrt(d), 1/(2*sqrt(d))]))
+        samples = categorical.sample(torch.Size([d, k])) - 1
+        samples = samples.to(dtype=torch.float)
+        return samples
     elif dist == 'bernoulli':
         return (torch.bernoulli(torch.rand(d, k)) * 2 - 1) / sqrt(k)
     elif dist == 'uniform':

@@ -1,9 +1,12 @@
 {
-  "kind": "strictly_additive",
+  "kind": "multi_full",
   "model_kwargs": {
+    "J": 5,
     "noise_prior": true,
     "kernel_type": "RBF",
-    "weighted": true
+    "ard": true,
+    "init_lengthscale_range": [0.4, 0.8],
+    "init_mixin_range": [0.9, 1.1]
   },
   "train_kwargs": {
     "verbose": false,

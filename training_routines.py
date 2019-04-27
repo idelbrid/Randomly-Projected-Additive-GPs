@@ -12,6 +12,7 @@ from sklearn.decomposition import PCA
 import warnings
 import copy
 import numpy as np
+from itertools import combinations
 
 def _map_to_optim(optimizer):
     """Helper to map optimizer string names to torch objects"""
@@ -170,10 +171,9 @@ def create_rp_kernel(d, k, J, ard=False, activation=None, ski=False,
     return ProjectionKernel(J, k, d, kernels, projs, bs, activation=activation, learn_proj=learn_proj, weighted=weighted)
 
 
-def create_additive_kernel(d, weighted=False, kernel_type='RBF', init_lengthscale_range=(1.0, 1.0),
-                           init_mixin_range=(1.0, 1.0),ski=False, ski_options=None, X=None):
+def create_strictly_additive_kernel(d, weighted=False, kernel_type='RBF', init_lengthscale_range=(1.0, 1.0),
+                                    init_mixin_range=(1.0, 1.0), ski=False, ski_options=None, X=None):
     """Inefficient implementation of a kernel where each dimension has its own RBF subkernel."""
-    # TODO: convert to using PolynomialProjectionKernel
     # TODO: add random initialization
 
     if kernel_type == 'RBF':
@@ -188,6 +188,57 @@ def create_additive_kernel(d, weighted=False, kernel_type='RBF', init_lengthscal
     kernel = StrictlyAdditiveKernel(d, kernel, weighted, ski=ski, ski_options=ski_options, X=X, **kwargs)
     kernel.initialize(init_mixin_range, init_lengthscale_range)
     return kernel
+
+
+def create_additive_kernel(d, groups, weighted=False, kernel_type='RBF', init_lengthscale_range=(1.0, 1.0),
+                           init_mixin_range=(1.0, 1.0), ski=False, ski_options=None, X=None):
+    if kernel_type == 'RBF':
+        kernel = gpytorch.kernels.RBFKernel
+        kwargs = dict()
+    elif kernel_type == 'Matern':
+        kernel = gpytorch.kernels.MaternKernel
+        kwargs = dict(nu=3/2)
+    else:
+        raise ValueError("Unknown kernel type")
+
+    kernel = AdditiveKernel(groups, d, kernel, weighted=weighted, ski=ski, ski_options=ski_options, X=X, **kwargs)
+    kernel.initialize(init_mixin_range, init_lengthscale_range)
+    return kernel
+
+def create_multi_additive_kernel(d, max_degree, weighted=False, kernel_type='RBF', init_lengthscale_range=(1.0, 1.0),
+                                 init_mixin_range=(1.0, 1.0), ski=False, ski_options=False, X=None):
+    if kernel_type == 'RBF':
+        kernel = gpytorch.kernels.RBFKernel
+        kwargs = dict()
+    elif kernel_type == 'Matern':
+        kernel = gpytorch.kernels.MaternKernel
+        kwargs = dict(nu=3/2)
+    else:
+        raise ValueError("Unknown kernel type")
+
+    max_degree = min(max_degree, d)
+    groups = []
+    for deg in range(1, max_degree+1):
+        groups.extend(list(set(combinations(list(range(d)), deg))))
+
+    kernel = AdditiveKernel(groups, d, kernel, weighted=weighted, ski=ski, ski_options=ski_options, X=X, **kwargs)
+    kernel.initialize(init_mixin_range, init_lengthscale_range)
+    return kernel
+
+
+def create_multi_full_kernel(d, J, ard=False, ski=False, grid_size=None, kernel_type='RBF', init_lengthscale_range=(1.0, 1.0),
+                             init_mixin_range=(1.0, 1.0)):
+    outputscales = _sample_from_range(J, init_mixin_range)
+    total = sum(outputscales)
+    outputscales = [o / total for o in outputscales]
+
+    subkernels = []
+    for j in range(0,J):
+        new_kernel = ScaleKernel(create_full_kernel(d, ard=ard, ski=ski, grid_size=grid_size, kernel_type=kernel_type,
+                                                    init_lengthscale_range=init_lengthscale_range))
+        new_kernel.initialize(outputscale=outputscales[j])
+        subkernels.append(new_kernel)
+    return gpytorch.kernels.AdditiveKernel(subkernels)
 
 
 def create_pca_kernel(trainX, random_projections=False, k=1, J=1, explained_variance=.99, ski=False, grid_size=None,
@@ -243,7 +294,12 @@ def create_full_kernel(d, ard=False, ski=False, grid_size=None, kernel_type='RBF
     else:
         raise ValueError("Unknown kernel type")
 
-    kernel.lengthscale = _sample_from_range(1, init_lengthscale_range)
+    if ard:
+        samples = ard_num_dims
+    else:
+        samples = 1
+    kernel.initialize(lengthscale=_sample_from_range(samples, init_lengthscale_range))
+    # kernel.lengthscale = _sample_from_range(1, init_lengthscale_range)
 
     if ski:
         kernel = GridInterpolationKernel(kernel, num_dims=d,
@@ -285,7 +341,7 @@ def create_svi_gp(trainX, kind, **kwargs):
     if kind == 'rp':
         kernel = create_rp_kernel(d, **kwargs)
     elif kind == 'additive':
-        kernel = create_additive_kernel(d, ski=False, **kwargs)
+        kernel = create_strictly_additive_kernel(d, ski=False, **kwargs)
     elif kind == 'full':
         kernel = create_full_kernel(d, ski=False, **kwargs)
     else:
@@ -363,7 +419,7 @@ def create_exact_gp(trainX, trainY, kind, **kwargs):
         additive: if True, (and not RP) use an additive kernel instead of RP or RBF
         """
     [n, d] = trainX.shape
-    if kind not in ['full', 'rp', 'additive', 'pca', 'pca_rp', 'rp_poly', 'deep_rp_poly', 'general_rp_poly']:
+    if kind not in ['full', 'rp', 'strictly_additive', 'additive', 'pca', 'pca_rp', 'rp_poly', 'deep_rp_poly', 'general_rp_poly', 'multi_full']:
         raise ValueError("Unknown kernel structure type {}".format(kind))
 
     # regular Gaussian likelihood for regression problem
@@ -381,6 +437,12 @@ def create_exact_gp(trainX, trainY, kind, **kwargs):
         if ski and grid_size is None:
             grid_size = int(grid_ratio * math.pow(n, 1 / d))
         kernel = create_full_kernel(d, grid_size=grid_size, **kwargs)
+    elif kind == 'multi_full':
+        kernel = create_multi_full_kernel(d, **kwargs)
+    elif kind == 'strictly_additive':
+        if ski and grid_size is None:
+            grid_size = int(grid_ratio * math.pow(n, 1))
+        kernel = create_strictly_additive_kernel(d, X=trainX, **kwargs)
     elif kind == 'additive':
         if ski and grid_size is None:
             grid_size = int(grid_ratio * math.pow(n, 1))
