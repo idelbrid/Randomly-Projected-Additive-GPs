@@ -302,6 +302,7 @@ if __name__ == '__main__':
     parser.add_argument('--no_toeplitz', dest='use_toeplitz', action='store_false')
     parser.add_argument('--device', type=str, default='cpu', required=False, help='device string to use in PyTorch')
     parser.add_argument('--skip_posterior_variances', action='store_true')
+    parser.add_argument('--ablation', action='store_true')
 
     args = parser.parse_args()
 
@@ -343,12 +344,21 @@ if __name__ == '__main__':
     for dataset in datasets:
         print('Starting dataset {}'.format(dataset))
         with gpytorch.settings.cg_tolerance(args.cg_tol),gpytorch.settings.fast_computations(not args.use_chol),gpytorch.settings.fast_pred_var(args.fast_pred):
-
             with gpytorch.settings.use_toeplitz(args.use_toeplitz):
-                results = run_experiment(training_routines.train_exact_gp, options,
-                               dataset, split=args.split, cv=args.cv, repeats=args.repeats,
-                                         normalize_using_train=True)
-            results['dataset'] = dataset
-            results['options'] = json.dumps(options)
-            df = pd.concat([df, results])
-            df.to_csv(args.output)
+                if args.ablation:
+                    jlist = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233]
+                else:
+                    jlist = [1]
+
+                for j in jlist:
+                    if args.ablation:
+                        options['model_kwargs']['J'] = j
+                    results = run_experiment(training_routines.train_exact_gp, options,
+                                   dataset, split=args.split, cv=args.cv, repeats=args.repeats,
+                                             normalize_using_train=True)
+                    if args.ablation:
+                        results['J'] = j
+                    results['dataset'] = dataset
+                    results['options'] = json.dumps(options)
+                    df = pd.concat([df, results])
+                    df.to_csv(args.output)
