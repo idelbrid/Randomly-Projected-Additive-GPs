@@ -205,6 +205,7 @@ def create_additive_kernel(d, groups, weighted=False, kernel_type='RBF', init_le
     kernel.initialize(init_mixin_range, init_lengthscale_range)
     return kernel
 
+
 def create_multi_additive_kernel(d, max_degree, weighted=False, kernel_type='RBF', init_lengthscale_range=(1.0, 1.0),
                                  init_mixin_range=(1.0, 1.0), ski=False, ski_options=False, X=None):
     if kernel_type == 'RBF':
