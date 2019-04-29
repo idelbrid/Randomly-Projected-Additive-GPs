@@ -1,8 +1,7 @@
 {
-  "kind": "rp_poly",
+  "kind": "deep_rp_poly",
   "model_kwargs": {
-    "J": 20,
-    "k": 1,
+    "degrees": [1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 5, 5, 6],
     "projection_architecture": "dnn",
     "projection_kwargs": {
       "hidden_layer_sizes": [
