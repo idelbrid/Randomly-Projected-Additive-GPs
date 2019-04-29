@@ -575,6 +575,69 @@ class SVGPRegressionModel(AbstractVariationalGP):
         return latent_pred
 
 
+def postprocess_rbf(dist_mat):
+    return dist_mat.div_(-2).exp_()
+
+
+class DuvenaudAdditiveKernel(gpytorch.kernels.Kernel):
+    def __init__(self, d, max_degree=None, active_dims=None, **kwargs):
+        super(DuvenaudAdditiveKernel, self).__init__(has_lengthscale=True,
+                                                     active_dims=active_dims,
+                                                     lengthscale_prior=None,
+                                                     lengthscale_constraint=None,
+                                                     **kwargs
+                                                     )
+        self.d = d
+        if max_degree is None:
+            self.max_degree = d
+        else:
+            self.max_degree = max_degree
+        if max_degree > d:
+            raise ValueError()
+
+        self.kernels = torch.nn.ModuleList([gpytorch.kernels.RBFKernel() for _ in range(d)])
+        self.register_parameter(
+            name='raw_outputscale',
+            parameter=torch.nn.Parameter(torch.zeros(*self.batch_shape, 1, max_degree))
+        )
+        outputscale_constraint = gpytorch.constraints.Positive()
+        self.register_constraint('raw_outputscale', outputscale_constraint)
+        self.outputscale_constraint = outputscale_constraint
+
+    @property
+    def outputscale(self):
+        return self.raw_outputscale_constraint.transform(self.raw_outputscale)
+
+    def forward(self, x1, x2, diag=False, last_dim_is_batch=False, **params):
+        x1_ = x1.div(self.lengthscale)  # account for lengthscales first
+        x2_ = x2.div(self.lengthscale)
+        kern_values = self.covar_dist(x1_, x2_, diag=diag, last_dim_is_batch=True,
+                                      square_dist=True,
+                                      dist_postprocess_func=postprocess_rbf,
+                                      postprocess=True)
+        print(kern_values)
+
+        # kern_values = D x n x n
+        # last dim is batch, which gets moved up to pos. 1
+        # compute scale-less values for each degree
+        kvals = torch.range(1, self.max_degree+1).reshape(-1, 1, 1, 1)
+        # kvals = 1 x D (indexes only)
+        e_n = torch.ones(self.max_degree+1, *kern_values.shape[1:])  # includes 0
+        print(kern_values.shape)
+        print(kvals.shape)
+        s_k = kern_values.pow(kvals).sum(dim=0)  # should have max_degree # of terms
+        # e_n = R x n x n
+        # s_k = R x n x n
+        for deg in range(1, self.max_degree+1):
+            print('deg', deg)
+            term = torch.zeros(*e_n.shape[1:])  # 1 x n x n
+            for k in range(1, deg+1):
+                print('k', k)
+                # e_n includes zero, s_k does not. Adjust indexing accordingly
+                term = term + (-1)**(k-1) * e_n[deg - k] * s_k[k-1]
+            e_n[deg] = term / deg
+        return (self.outputscale.reshape(-1, 1, 1) * e_n[1:]).sum(dim=0)
+
 def train_to_convergence(model, xs, ys,
                          optimizer: Optional[Type]=None, lr=0.1, objective=None,
                          max_iter=100, verbose=0, patience=20,
