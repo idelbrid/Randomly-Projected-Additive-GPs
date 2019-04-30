@@ -2,7 +2,7 @@ import math
 import rp
 from gp_models import ExactGPModel, train_to_convergence, ProjectionKernel, \
     LinearRegressionModel, mean_squared_error, PolynomialProjectionKernel, DNN,\
-    GeneralizedPolynomialProjectionKernel, GeneralizedProjectionKernel, StrictlyAdditiveKernel, AdditiveKernel
+    GeneralizedPolynomialProjectionKernel, GeneralizedProjectionKernel, StrictlyAdditiveKernel, AdditiveKernel, DuvenaudAdditiveKernel
 import gpytorch
 from gpytorch.kernels import ScaleKernel, RBFKernel, GridInterpolationKernel
 from gpytorch.mlls import VariationalELBO, VariationalMarginalLogLikelihood
@@ -203,6 +203,11 @@ def create_additive_kernel(d, groups, weighted=False, kernel_type='RBF', init_le
 
     kernel = AdditiveKernel(groups, d, kernel, weighted=weighted, ski=ski, ski_options=ski_options, X=X, **kwargs)
     kernel.initialize(init_mixin_range, init_lengthscale_range)
+    return kernel
+
+
+def create_duvenaud_additive_kernel(d, max_degree):
+    kernel = DuvenaudAdditiveKernel(d, max_degree)
     return kernel
 
 
@@ -420,7 +425,8 @@ def create_exact_gp(trainX, trainY, kind, **kwargs):
         additive: if True, (and not RP) use an additive kernel instead of RP or RBF
         """
     [n, d] = trainX.shape
-    if kind not in ['full', 'rp', 'strictly_additive', 'additive', 'pca', 'pca_rp', 'rp_poly', 'deep_rp_poly', 'general_rp_poly', 'multi_full']:
+    if kind not in ['full', 'rp', 'strictly_additive', 'additive', 'pca', 'pca_rp', 'rp_poly', 'deep_rp_poly',
+                    'general_rp_poly', 'multi_full', 'duvenaud_additive']:
         raise ValueError("Unknown kernel structure type {}".format(kind))
 
     # regular Gaussian likelihood for regression problem
@@ -448,6 +454,8 @@ def create_exact_gp(trainX, trainY, kind, **kwargs):
         if ski and grid_size is None:
             grid_size = int(grid_ratio * math.pow(n, 1))
         kernel = create_additive_kernel(d, X=trainX, **kwargs)
+    elif kind == 'duvenaud_additive':
+        kernel = create_duvenaud_additive_kernel(d, **kwargs)
     elif kind == 'pca':
         # TODO: modify to work with PCA
         if ski and grid_size is None:

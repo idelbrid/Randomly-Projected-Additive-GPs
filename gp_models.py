@@ -616,7 +616,7 @@ class DuvenaudAdditiveKernel(gpytorch.kernels.Kernel):
                                       square_dist=True,
                                       dist_postprocess_func=postprocess_rbf,
                                       postprocess=True)
-        print(kern_values)
+        print('Single kern values', kern_values)
 
         # kern_values = D x n x n
         # last dim is batch, which gets moved up to pos. 1
@@ -625,21 +625,21 @@ class DuvenaudAdditiveKernel(gpytorch.kernels.Kernel):
         # kvals = 1 x D (indexes only)
         e_n = torch.ones(self.max_degree+1, *kern_values.shape[1:])  # includes 0
  
-        print(kvals)
-        s_k = kern_values.pow(kvals).sum(dim=0)  # should have max_degree # of terms
-        print(s_k)
+        print('degrees', kvals)
+        s_k = kern_values.pow(kvals).sum(dim=1)  # should have max_degree # of terms
+        print('sum of kernels to degrees', s_k)
         # e_n = R x n x n
         # s_k = R x n x n
         for deg in range(1, self.max_degree+1):
-#             print('deg', deg)
             term = torch.zeros(*e_n.shape[1:])  # 1 x n x n
             for k in range(1, deg+1):
 #                 print('k', k)
                 # e_n includes zero, s_k does not. Adjust indexing accordingly
                 term = term + (-1)**(k-1) * e_n[deg - k] * s_k[k-1]
             e_n[deg] = term / deg
-        print(e_n[deg])
+            print(e_n[deg])
         return (self.outputscale.reshape(-1, 1, 1) * e_n[1:]).sum(dim=0)
+
 
 def train_to_convergence(model, xs, ys,
                          optimizer: Optional[Type]=None, lr=0.1, objective=None,

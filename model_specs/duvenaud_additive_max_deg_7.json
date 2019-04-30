@@ -1,0 +1,15 @@
+{
+  "kind": "duvenaud_additive",
+  "model_kwargs": {
+    "noise_prior": true,
+    "max_degree": 7,
+  },
+  "train_kwargs": {
+    "verbose": false,
+    "optimizer": "adam",
+    "max_iter": 1000,
+    "lr": 0.1,
+    "patience": 20,
+    "smooth": true
+  }
+}

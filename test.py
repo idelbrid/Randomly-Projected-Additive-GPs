@@ -1,6 +1,6 @@
 from unittest import TestCase
 from gp_models import ProjectionKernel, PolynomialProjectionKernel, ExactGPModel, GeneralizedPolynomialProjectionKernel
-from gp_models import AdditiveKernel, StrictlyAdditiveKernel, convert_rp_model_to_additive_model
+from gp_models import AdditiveKernel, StrictlyAdditiveKernel, convert_rp_model_to_additive_model, DuvenaudAdditiveKernel
 from rp import gen_rp, space_equally
 from gp_experiment_runner import load_dataset, _normalize_by_train, _access_fold, _determine_folds
 import torch
@@ -613,3 +613,39 @@ class TestExperimentHelpers(TestCase):
         train, test = _access_fold(df, fold_starts, 1)
         self.assertListEqual(test['index'].values.tolist(), [2])
         self.assertListEqual(train['index'].values.tolist(), [0, 1, 3])
+
+
+class TestDuvenaudKernel(TestCase):
+    def test_degree1(self):
+        AddK = DuvenaudAdditiveKernel(3, 1)
+        self.assertEqual(AddK.lengthscale.numel(), 3)
+        self.assertEqual(AddK.outputscale.numel(), 1)
+
+        testvals = torch.tensor([[1, 2, 3], [7, 5, 2]], dtype=torch.float)
+        add_k_val = AddK(testvals, testvals).evaluate()
+
+        manual_k = ScaleKernel(gpytorch.kernels.AdditiveKernel(RBFKernel(active_dims=0),
+                                                               RBFKernel(active_dims=1),
+                                                               RBFKernel(active_dims=2)))
+        manual_add_k_val = manual_k(testvals, testvals).evaluate()
+
+        self.assertTrue(torch.allclose(add_k_val, manual_add_k_val))
+
+    def test_degree2(self):
+        AddK = DuvenaudAdditiveKernel(3, 2)
+        self.assertEqual(AddK.lengthscale.numel(), 3)
+        self.assertEqual(AddK.outputscale.numel(), 2)
+
+        testvals = torch.tensor([[1, 2, 3], [7, 5, 2]], dtype=torch.float)
+        add_k_val = AddK(testvals, testvals).evaluate()
+
+        manual_k1 = ScaleKernel(gpytorch.kernels.AdditiveKernel(RBFKernel(active_dims=0),
+                                                               RBFKernel(active_dims=1),
+                                                               RBFKernel(active_dims=2)))
+        manual_k2 = ScaleKernel(gpytorch.kernels.AdditiveKernel(RBFKernel(active_dims=[0,1]),
+                                                                RBFKernel(active_dims=[1,2]),
+                                                                RBFKernel(active_dims=[0,2])))
+        manual_k = gpytorch.kernels.AdditiveKernel(manual_k1, manual_k2)
+        manual_add_k_val = manual_k(testvals, testvals).evaluate()
+
+        self.assertTrue(torch.allclose(add_k_val, manual_add_k_val))
