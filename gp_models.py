@@ -581,6 +581,13 @@ def postprocess_rbf(dist_mat):
 
 class DuvenaudAdditiveKernel(gpytorch.kernels.Kernel):
     def __init__(self, d, max_degree=None, active_dims=None, **kwargs):
+        self.d = d
+        if max_degree is None:
+            self.max_degree = d
+        else:
+            self.max_degree = max_degree
+        if max_degree > d:
+            self.max_degree = d
         super(DuvenaudAdditiveKernel, self).__init__(has_lengthscale=True,
                                                      active_dims=active_dims,
                                                      lengthscale_prior=None,
@@ -588,18 +595,12 @@ class DuvenaudAdditiveKernel(gpytorch.kernels.Kernel):
                                                      ard_num_dims=d,
                                                      **kwargs
                                                      )
-        self.d = d
-        if max_degree is None:
-            self.max_degree = d
-        else:
-            self.max_degree = max_degree
-        if max_degree > d:
-            raise ValueError()
+
 
         self.kernels = torch.nn.ModuleList([gpytorch.kernels.RBFKernel() for _ in range(d)])
         self.register_parameter(
             name='raw_outputscale',
-            parameter=torch.nn.Parameter(torch.zeros(*self.batch_shape, 1, max_degree))
+            parameter=torch.nn.Parameter(torch.zeros(*self.batch_shape, 1, self.max_degree))
         )
         outputscale_constraint = gpytorch.constraints.Positive()
         self.register_constraint('raw_outputscale', outputscale_constraint)
@@ -616,7 +617,6 @@ class DuvenaudAdditiveKernel(gpytorch.kernels.Kernel):
                                       square_dist=True,
                                       dist_postprocess_func=postprocess_rbf,
                                       postprocess=True)
-        print('Single kern values', kern_values)
 
         # kern_values = D x n x n
         # last dim is batch, which gets moved up to pos. 1
@@ -625,9 +625,7 @@ class DuvenaudAdditiveKernel(gpytorch.kernels.Kernel):
         # kvals = 1 x D (indexes only)
         e_n = torch.ones(self.max_degree+1, *kern_values.shape[1:])  # includes 0
  
-        print('degrees', kvals)
         s_k = kern_values.pow(kvals).sum(dim=1)  # should have max_degree # of terms
-        print('sum of kernels to degrees', s_k)
         # e_n = R x n x n
         # s_k = R x n x n
         for deg in range(1, self.max_degree+1):
@@ -637,7 +635,6 @@ class DuvenaudAdditiveKernel(gpytorch.kernels.Kernel):
                 # e_n includes zero, s_k does not. Adjust indexing accordingly
                 term = term + (-1)**(k-1) * e_n[deg - k] * s_k[k-1]
             e_n[deg] = term / deg
-            print(e_n[deg])
         return (self.outputscale.reshape(-1, 1, 1) * e_n[1:]).sum(dim=0)
 
 

@@ -649,3 +649,11 @@ class TestDuvenaudKernel(TestCase):
         manual_add_k_val = manual_k(testvals, testvals).evaluate()
 
         self.assertTrue(torch.allclose(add_k_val, manual_add_k_val))
+
+    def test_degree3(self):
+        AddK = DuvenaudAdditiveKernel(2, 3)
+        self.assertEqual(AddK.lengthscale.numel(), 2)
+        self.assertEqual(AddK.outputscale.numel(), 2)
+
+        testvals = torch.tensor([[2, 3], [5, 2]], dtype=torch.float)
+        add_k_val = AddK(testvals, testvals).evaluate()

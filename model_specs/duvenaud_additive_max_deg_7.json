@@ -2,7 +2,7 @@
   "kind": "duvenaud_additive",
   "model_kwargs": {
     "noise_prior": true,
-    "max_degree": 7,
+    "max_degree": 7
   },
   "train_kwargs": {
     "verbose": false,
