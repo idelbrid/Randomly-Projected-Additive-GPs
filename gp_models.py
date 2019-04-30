@@ -636,18 +636,17 @@ class DuvenaudAdditiveKernel(gpytorch.kernels.Kernel):
         # compute scale-less values for each degree
         kvals = torch.range(1, self.max_degree, device=kern_values.device).reshape(-1, 1, 1, 1)
         # kvals = 1 x D (indexes only)
-        e_n = torch.ones(self.max_degree+1, *kern_values.shape[1:], device=kern_values.device)  # includes 0
- 
+        # e_n = torch.ones(self.max_degree+1, *kern_values.shape[1:], device=kern_values.device)  # includes 0
+        e_n = torch.zeros(self.max_degree+1, *kern_values.shape[1:], device=kern_values.device)
+        e_n[0, :, :] = 1.0
         s_k = kern_values.pow(kvals).sum(dim=1)  # should have max_degree # of terms
         # e_n = R x n x n
         # s_k = R x n x n
         for deg in range(1, self.max_degree+1):
-            term = torch.zeros(*e_n.shape[1:], device=kern_values.device)  # 1 x n x n
+            # term = torch.zeros(*e_n.shape[1:], device=kern_values.device)  # 1 x n x n
             for k in range(1, deg+1):
-#                 print('k', k)
-                # e_n includes zero, s_k does not. Adjust indexing accordingly
-                term.add_((-1)**(k-1) * e_n[deg - k] * s_k[k-1])
-            e_n[deg] = term / deg
+                e_n[deg].add_((-1)**(k-1) * e_n[deg - k] * s_k[k-1])
+            e_n[deg].div_(deg)
         return (self.outputscale.reshape(-1, 1, 1) * e_n[1:]).sum(dim=0)
 
 
