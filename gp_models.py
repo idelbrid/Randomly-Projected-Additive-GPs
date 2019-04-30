@@ -623,13 +623,13 @@ class DuvenaudAdditiveKernel(gpytorch.kernels.Kernel):
         # compute scale-less values for each degree
         kvals = torch.range(1, self.max_degree).reshape(-1, 1, 1, 1)
         # kvals = 1 x D (indexes only)
-        e_n = torch.ones(self.max_degree+1, *kern_values.shape[1:])  # includes 0
+        e_n = torch.ones(self.max_degree+1, *kern_values.shape[1:], device=kvals.device)  # includes 0
  
         s_k = kern_values.pow(kvals).sum(dim=1)  # should have max_degree # of terms
         # e_n = R x n x n
         # s_k = R x n x n
         for deg in range(1, self.max_degree+1):
-            term = torch.zeros(*e_n.shape[1:])  # 1 x n x n
+            term = torch.zeros(*e_n.shape[1:], device=kvals.device)  # 1 x n x n
             for k in range(1, deg+1):
 #                 print('k', k)
                 # e_n includes zero, s_k does not. Adjust indexing accordingly
