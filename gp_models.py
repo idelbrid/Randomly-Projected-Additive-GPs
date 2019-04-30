@@ -634,7 +634,7 @@ class DuvenaudAdditiveKernel(gpytorch.kernels.Kernel):
         # kern_values = D x n x n
         # last dim is batch, which gets moved up to pos. 1
         # compute scale-less values for each degree
-        kvals = torch.arange(1, self.max_degree, device=kern_values.device).reshape(-1, 1, 1, 1)
+        kvals = torch.range(1, self.max_degree, device=kern_values.device).reshape(-1, 1, 1, 1)
         # kvals = 1 x D (indexes only)
         e_n = torch.ones(self.max_degree+1, *kern_values.shape[1:], device=kern_values.device)  # includes 0
  
