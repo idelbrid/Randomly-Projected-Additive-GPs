@@ -606,10 +606,22 @@ class DuvenaudAdditiveKernel(gpytorch.kernels.Kernel):
         outputscale_constraint = gpytorch.constraints.Positive()
         self.register_constraint('raw_outputscale', outputscale_constraint)
         self.outputscale_constraint = outputscale_constraint
+        self.outputscale = [1 / self.max_degree for _ in range(self.max_degree)]
+
 
     @property
     def outputscale(self):
         return self.raw_outputscale_constraint.transform(self.raw_outputscale)
+
+    @outputscale.setter
+    def outputscale(self, value):
+        self._set_outputscale(value)
+
+    def _set_outputscale(self, value):
+        if not torch.is_tensor(value):
+            value = torch.as_tensor(value).to(self.raw_outputscale)
+
+        self.initialize(raw_outputscale=self.outputscale_constraint.inverse_transform(value))
 
     def forward(self, x1, x2, diag=False, last_dim_is_batch=False, **params):
         x1_ = x1.div(self.lengthscale)  # account for lengthscales first
@@ -622,7 +634,7 @@ class DuvenaudAdditiveKernel(gpytorch.kernels.Kernel):
         # kern_values = D x n x n
         # last dim is batch, which gets moved up to pos. 1
         # compute scale-less values for each degree
-        kvals = torch.range(1, self.max_degree, device=kern_values.device).reshape(-1, 1, 1, 1)
+        kvals = torch.arange(1, self.max_degree, device=kern_values.device).reshape(-1, 1, 1, 1)
         # kvals = 1 x D (indexes only)
         e_n = torch.ones(self.max_degree+1, *kern_values.shape[1:], device=kern_values.device)  # includes 0
  
@@ -634,7 +646,7 @@ class DuvenaudAdditiveKernel(gpytorch.kernels.Kernel):
             for k in range(1, deg+1):
 #                 print('k', k)
                 # e_n includes zero, s_k does not. Adjust indexing accordingly
-                term = term + (-1)**(k-1) * e_n[deg - k] * s_k[k-1]
+                term.add_((-1)**(k-1) * e_n[deg - k] * s_k[k-1])
             e_n[deg] = term / deg
         return (self.outputscale.reshape(-1, 1, 1) * e_n[1:]).sum(dim=0)
 
