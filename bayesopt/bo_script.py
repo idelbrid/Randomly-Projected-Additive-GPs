@@ -1,6 +1,9 @@
 import bayesopt as bo
 import torch
 import gpytorch
+
+import bayesopt.acquisition
+import bayesopt.utils
 import gp_models
 from training_routines import create_rp_poly_kernel
 import gp_experiment_runner
@@ -30,10 +33,10 @@ def run_bo(d=10, iters=200, acq='ei', use_rp=False, repeats=5, learn_proj=False)
         training_options = dict(max_iter=10000, check_conv=True, lr=0.1, optimizer=torch.optim.Adam,
                                 verbose=False, patience=20, smooth=True)
         if acq == 'ei':
-            acq_fxn = bo.EI
+            acq_fxn = bayesopt.acquisition.EI
         else:
-            acq_fxn = bo.ThompsonSampling
-        optimizer = bo.BayesOpt(bo.stybtang, bounds, gp_model=model, acq_fxn=acq_fxn, optimizer=minimize,
+            acq_fxn = bayesopt.acquisition.ThompsonSampling
+        optimizer = bo.BayesOpt(bayesopt.utils.stybtang, bounds, gp_model=model, acq_fxn=acq_fxn, optimizer=minimize,
                                 initial_points=15, init_method='latin_hc', gp_optim_freq=5,
                                 gp_optim_options=training_options)
 
