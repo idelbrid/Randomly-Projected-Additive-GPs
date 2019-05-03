@@ -1,6 +1,6 @@
 import gpytorch
 import numpy as np
-from torch import __init__
+import torch
 
 from gp_models import AdditiveExactGPModel
 

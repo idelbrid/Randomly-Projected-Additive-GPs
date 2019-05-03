@@ -2,14 +2,19 @@ import torch
 import gpytorch
 from typing import Callable, Iterable
 from scipy.optimize import differential_evolution
-import gp_models
-from .acquisition import EI, ThompsonSampling, UCB, surrogate_AddUCB
+# import gp_models
+from .optimize import quasirandom_candidates, random_candidates, brute_candidates
+# from .acquisition import EI, ThompsonSampling, UCB, surrogate_AddUCB
 from .utils import stybtang
-from gp_models import AdditiveExactGPModel, ProjectedAdditiveExactGPModel
-from .optimize import maximize_enumerate, maximize_grad, maximize_scipy
+# from gp_models import ProjectedAdditiveExactGPModel
 import numpy as np
-from torch.quasirandom import SobolEngine
-
+from botorch.models.model import Model
+from botorch.models import SingleTaskGP, FixedNoiseGP
+from botorch.acquisition.acquisition import AcquisitionFunction
+from botorch.gen import gen_candidates_scipy, get_best_candidates
+from botorch import fit_gpytorch_model
+from botorch.acquisition import ExpectedImprovement, UpperConfidenceBound
+from botorch.optim import joint_optimize
 
 # TODO: implement Add-EI
 # TODO: implement similar for random projections.
@@ -26,29 +31,6 @@ def unscale_from_bounds(x, bounds):
     left = torch.tensor([b[0] for b in bounds], dtype=torch.float).unsqueeze(dim=0)
     right = torch.tensor([b[1] for b in bounds], dtype=torch.float).unsqueeze(dim=0)
     return (x - left) / (right - left)
-
-
-def quasirandom_candidates(n, dim):
-    engine = SobolEngine(dim, scramble=True)
-    candX = engine.draw(n)
-    return candX
-
-
-def random_candidates(n, dim):
-    candX = torch.rand(n, dim)
-    return candX
-
-
-def brute_candidates(n, dim):
-    spot_per_dim = []
-    num_per_dim = int(np.floor(np.power(n, 1 / dim)))
-    for i in range(dim):
-        spots = torch.linspace(0, 1, num_per_dim + 2)[1:-1]
-        spot_per_dim.append(spots)
-    tensors = torch.meshgrid(spot_per_dim)
-    stacked = torch.stack(tensors)
-    candX = stacked.reshape(-1, dim)
-    return candX
 
 
 # NOTE: adapted from dragonfly_opt (https://github.com/dragonfly/dragonfly/blob/master/dragonfly/utils/oper_utils.py)
@@ -101,23 +83,23 @@ def aggregate_results(group_results, dimension, groups):
 # TODO: add gradients
 # TODO: add marginalization
 class BayesOpt(object):
-    def __init__(self, obj_fxn: Callable, bounds: Iterable, gp_model: gpytorch.models.GP, acq_fxn: str,
-                 optimizer='quasirandom', initial_points=10, init_method='latin_hc', gp_optim_freq=None,
+    def __init__(self, obj_fxn: Callable,
+                 bounds: Iterable,
+                 model: Model,
+                 acq_fxn: AcquisitionFunction,
+                 # optimizer='quasirandom',
+                 initial_points=10,
+                 init_method='latin_hc',
+                 gp_optim_freq=None,
                  gp_optim_options=None):
         self.obj_fxn = obj_fxn
-        self.bounds = bounds
-        self.model = gp_model
-        self._acq_fxn_name = acq_fxn
-        if self._acq_fxn_name.lower().startswith('ei'):
-            self.acq_fxn = EI
-        elif self._acq_fxn_name.lower().startswith('thompson'):
-            self.acq_fxn = ThompsonSampling
-        elif self._acq_fxn_name.lower().startswith('ucb'):
-            self.acq_fxn = UCB
-        elif self._acq_fxn_name.lower().startswith('add_ucb'):
-            self.acq_fxn = surrogate_AddUCB
-        self.optimizer = optimizer
-        self._dimension = len(bounds)
+        self.bounds = torch.as_tensor(bounds, dtype=torch.float)
+
+        self.model = model
+        self.acq_fxn = acq_fxn
+
+        self._dimension = self.bounds.shape[0]
+        self._internal_bounds = torch.tensor([[0, 1] for _ in range(self._dimension)], dtype=torch.float).t()
         self._initial_points = initial_points
         self._init_method = init_method
 
@@ -126,8 +108,6 @@ class BayesOpt(object):
         self.true_y_history = []
         self._obsY_std = None
         self._n = 0
-        self._candX = None
-        self._num_candidates = 1500
 
         self._initialized = False
         self.gp_optim_freq = gp_optim_freq
@@ -152,37 +132,25 @@ class BayesOpt(object):
 
     @property
     def _best_internal_y(self):
-        return self.obsY.min()
+        return self.obsY.max()
 
     @property
     def _best_internal_x(self):
-        return self.obsX[self.obsY.argmin(), :]
+        return self.obsX[self.obsY.argmax(), :]
 
     @property
     def best_true_y(self):
-        return self.true_y_history.min()
+        return self.true_y_history.max()
 
     @property
     def best_true_y_path(self):
-        return [self.true_y_history[:i+1].min().item() for i in range(len(self.true_y_history))]
+        return [self.true_y_history[:i+1].max().item() for i in range(len(self.true_y_history))]
 
-    def candX(self, dim=None):
-        if dim is None:
-            dimension = self._dimension
-        else:
-            dimension = dim
-        if self._candX is None or self.optimizer == 'random' or (dim is not None):
-            if self.optimizer == 'quasirandom':
-                candX = quasirandom_candidates(self._num_candidates, dimension)
-            elif self.optimizer == 'random':
-                candX = random_candidates(self._num_candidates, dimension)
-            else:
-                candX = brute_candidates(self._num_candidates, dimension)
-            self._candX = candX
+    def update_model(self, manually_set=True, force_update=False, from_scratch=False):
+        # SingleTaskGP()
+        # model = FixedNoiseGP(train_x, train_obj, train_yvar.expand_as(train_obj)).to(train_x)
+        # mll = ExactMarginalLogLikelihood(model.likelihood, model)
 
-        return self._candX
-
-    def update_model(self, manually_set=True, force_update=False):
         need_to_refit = force_update or (self.gp_optim_freq is not None and (self._n % self.gp_optim_freq == 0))
         if need_to_refit:
             self._obsY_std = self.true_y_history.std().detach()
@@ -198,32 +166,41 @@ class BayesOpt(object):
         if need_to_refit:
             self.model.train()
             mll = gpytorch.mlls.ExactMarginalLogLikelihood(self.model.likelihood, self.model)
-            gp_models.train_to_convergence(self.model, self.obsX, self.obsY,
-                                           objective=mll, **self.gp_optim_options)
+            fit_gpytorch_model(mll)
+            # gp_models.train_to_convergence(self.model, self.obsX, self.obsY,
+            #                                objective=mll, **self.gp_optim_options)
         self.model.eval()
         return self.model
 
-    def _maximize_acq(self, **kwargs):
-        # TODO: unbreak
-        pass
+    def _maximize_acq(self, num_restarts=10, raw_samples=500):
+        acq_func = self.acq_fxn(self.model, self._best_internal_y)
+        candidates = joint_optimize(
+            acq_function=acq_func,
+            bounds=self._internal_bounds,  # I think this should actually just be like [0,1]
+            num_restarts=num_restarts,
+            q=1,
+            raw_samples=raw_samples,  # used for intialization heuristic
+        )
+        # observe new values
+        new_x = candidates.detach()
+        return new_x
 
-    def step(self, **optimizer_kwargs):
+    def step(self, **kwargs):
         if not self._initialized:
             raise ValueError("Optimizer not initialized! Initialize first")
 
-        res = self._maximize_acq(**optimizer_kwargs)
-
-        newX = torch.tensor(res.x, dtype=torch.float)
-        Y_at_scale = self.obj_fxn(scale_to_bounds(newX, self.bounds))
+        new_x = self._maximize_acq(**kwargs)
+        Y_at_scale = self.obj_fxn(scale_to_bounds(new_x, self.bounds))
         # Store the true Y value before scaling down to current std
         self.true_y_history = torch.cat([self.true_y_history, Y_at_scale], dim=0)
 
-        # Scale by standard deviation and add to internal data.
         newY = self.descale_y(Y_at_scale)
-        self.obsX = torch.cat([self.obsX, newX], dim=0)
+        self.obsX = torch.cat([self.obsX, new_x], dim=0)
         self.obsY = torch.cat([self.obsY, newY], dim=0)
-        self._n += 1
+        self._n += len(newY)
+
         self.update_model()
+
         return self
 
     def steps(self, num_steps, print_=True, **optimizer_kwargs):
@@ -235,44 +212,5 @@ class BayesOpt(object):
                 print(i, self.best_true_y, 'noise {:2.3f}, outputscale={:3.1f}'.format(
                     self.model.likelihood.noise.item(),
                     self.model.covar_module.outputscale.item()))
-                # print(self._internal_best_y, self._obsY_std, self._internal_best_y*self._obsY_std, self.true_best_y_path[-1])
         return self
 
-
-if __name__ == '__main__':
-    import training_routines
-    import scipy
-
-    d = 20
-    bounds = [(-4, 4) for _ in range(d)]
-    def objective_function(x):
-        print('queries x=', x)
-        res = stybtang(x)
-        print('Obtained', res)
-        return res
-
-    trainX = torch.tensor([], dtype=torch.float)
-    trainY = torch.tensor([], dtype=torch.float)
-    lik = gpytorch.likelihoods.GaussianLikelihood()
-    lik.initialize(noise=0.01)
-    lik.raw_noise.requires_grad = False
-
-    # kernel = training_routines.create_general_rp_poly_kernel(10, [1 for _ in range(d)], learn_proj=False,
-    #                                                          kernel_type='Matern', weighted=True)
-    kernel = training_routines.create_rp_poly_kernel(d, 1, d, None, learn_proj=False, weighted=True,
-                                                     kernel_type='RBF', space_proj=True)
-    # kernel.projection_module.weight.data = rp.gen_rp(d, d, 'very-sparse')
-    # kernel = training_routines.create_full_kernel(d, ard=True, kernel_type='Matern')
-    # kernel = training_routines.create_additive_kernel(d, kernel_type='Matern')
-    kernel = gpytorch.kernels.ScaleKernel(kernel)
-    # model = AdditiveExactGPModel(trainX, trainY, lik, kernel)
-    model = ProjectedAdditiveExactGPModel(trainX, trainY, lik, kernel)
-    inner_optimizer = 'quasirandom'
-    gp_optim_options = dict(max_iter=20, optimizer=torch.optim.Adam, verbose=False, lr=0.1, check_conv=False)
-
-    optimizer = BayesOpt(objective_function, bounds, model, 'add_ucb', inner_optimizer,
-                            gp_optim_freq=5, gp_optim_options=gp_optim_options, initial_points=10)
-
-    with gpytorch.settings.lazily_evaluate_kernels(True):
-        optimizer.initialize()
-        optimizer.steps(200, maxf=200)

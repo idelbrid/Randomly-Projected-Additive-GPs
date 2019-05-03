@@ -36,7 +36,7 @@ def run_bo(d=10, iters=200, acq='ei', use_rp=False, repeats=5, learn_proj=False)
             acq_fxn = bayesopt.acquisition.EI
         else:
             acq_fxn = bayesopt.acquisition.ThompsonSampling
-        optimizer = bo.BayesOpt(bayesopt.utils.stybtang, bounds, gp_model=model, acq_fxn=acq_fxn, optimizer=minimize,
+        optimizer = bo.BayesOpt(bayesopt.utils.stybtang, bounds, model=model, acq_fxn=acq_fxn, optimizer=minimize,
                                 initial_points=15, init_method='latin_hc', gp_optim_freq=5,
                                 gp_optim_options=training_options)
 

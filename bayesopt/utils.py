@@ -1,8 +1,7 @@
 from math import pi
 
 import numpy as np
-from torch import __init__
-
+import torch
 
 def stybtang(x: torch.Tensor):
     return 1/2 * torch.sum(x.pow(4) - 16*x.pow(2) + 5*x, dim=-1)
