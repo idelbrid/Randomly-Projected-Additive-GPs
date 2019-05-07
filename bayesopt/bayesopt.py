@@ -1,20 +1,14 @@
 import torch
 import gpytorch
-from typing import Callable, Iterable
-from scipy.optimize import differential_evolution
-# import gp_models
+from typing import Callable, Iterable, Any
 from .optimize import quasirandom_candidates, random_candidates, brute_candidates
-# from .acquisition import EI, ThompsonSampling, UCB, surrogate_AddUCB
-from .utils import stybtang
-# from gp_models import ProjectedAdditiveExactGPModel
 import numpy as np
 from botorch.models.model import Model
-from botorch.models import SingleTaskGP, FixedNoiseGP
 from botorch.acquisition.acquisition import AcquisitionFunction
-from botorch.gen import gen_candidates_scipy, get_best_candidates
 from botorch import fit_gpytorch_model
-from botorch.acquisition import ExpectedImprovement, UpperConfidenceBound
+from botorch.optim.fit import fit_gpytorch_torch
 from botorch.optim import joint_optimize
+from .utils import get_lengthscales, get_mixins, format_for_str, get_outputscale
 
 # TODO: implement Add-EI
 # TODO: implement similar for random projections.
@@ -85,17 +79,18 @@ def aggregate_results(group_results, dimension, groups):
 class BayesOpt(object):
     def __init__(self, obj_fxn: Callable,
                  bounds: Iterable,
-                 model: Model,
+                 init_model_fxn: Callable[[torch.Tensor, torch.Tensor], Model],
                  acq_fxn: AcquisitionFunction,
-                 # optimizer='quasirandom',
                  initial_points=10,
                  init_method='latin_hc',
                  gp_optim_freq=None,
-                 gp_optim_options=None):
+                 from_scratch_freq=1e5,
+                 ):
         self.obj_fxn = obj_fxn
         self.bounds = torch.as_tensor(bounds, dtype=torch.float)
 
-        self.model = model
+        self.init_model_fxn = init_model_fxn
+        self.model = None
         self.acq_fxn = acq_fxn
 
         self._dimension = self.bounds.shape[0]
@@ -105,13 +100,13 @@ class BayesOpt(object):
 
         self.obsX = torch.tensor([], dtype=torch.float)
         self.obsY = torch.tensor([], dtype=torch.float)
-        self.true_y_history = []
+        self.true_y_history = torch.tensor([], dtype=torch.float)
         self._obsY_std = None
         self._n = 0
 
         self._initialized = False
         self.gp_optim_freq = gp_optim_freq
-        self.gp_optim_options = gp_optim_options
+        self.from_scratch_freq = from_scratch_freq
 
     def descale_y(self, y):
         return y / self._obsY_std
@@ -128,7 +123,7 @@ class BayesOpt(object):
 
         self.obsY = self.descale_y(self.obsY)
         self._initialized = True
-        self.update_model(manually_set=True, force_update=True)
+        self.update_model(manually_set=True, force_update=True, from_scratch=True)
 
     @property
     def _best_internal_y(self):
@@ -144,7 +139,7 @@ class BayesOpt(object):
 
     @property
     def best_true_y_path(self):
-        return [self.true_y_history[:i+1].max().item() for i in range(len(self.true_y_history))]
+        return [self.true_y_history[:i+1].max().item() for i in range(self.true_y_history.shape[0])]
 
     def update_model(self, manually_set=True, force_update=False, from_scratch=False):
         # SingleTaskGP()
@@ -156,9 +151,14 @@ class BayesOpt(object):
             self._obsY_std = self.true_y_history.std().detach()
             self.obsY = self.descale_y(self.true_y_history)
 
-        if manually_set or need_to_refit:
+        if need_to_refit and from_scratch:
+            # create entirely new GP model using user provided hook
+            self.model = self.init_model_fxn(self.obsX, self.obsY)
+        elif manually_set or need_to_refit:
+            # manually set the training data of an existing model
             self.model.set_train_data(self.obsX, self.obsY, strict=False)
         else:
+            # just get the fantasy model
             newX = self.obsX[-1:-2, :]
             newY = self.obsY[-1:-2]
             self.model = self.model.get_fantasy_model(newX, newY)
@@ -166,7 +166,7 @@ class BayesOpt(object):
         if need_to_refit:
             self.model.train()
             mll = gpytorch.mlls.ExactMarginalLogLikelihood(self.model.likelihood, self.model)
-            fit_gpytorch_model(mll)
+            fit_gpytorch_model(mll, optimizer=fit_gpytorch_torch)
             # gp_models.train_to_convergence(self.model, self.obsX, self.obsY,
             #                                objective=mll, **self.gp_optim_options)
         self.model.eval()
@@ -179,7 +179,7 @@ class BayesOpt(object):
             bounds=self._internal_bounds,  # I think this should actually just be like [0,1]
             num_restarts=num_restarts,
             q=1,
-            raw_samples=raw_samples,  # used for intialization heuristic
+            raw_samples=raw_samples,  # used for initialization heuristic
         )
         # observe new values
         new_x = candidates.detach()
@@ -199,7 +199,7 @@ class BayesOpt(object):
         self.obsY = torch.cat([self.obsY, newY], dim=0)
         self._n += len(newY)
 
-        self.update_model()
+        self.update_model(from_scratch=self._n % self.from_scratch_freq == 0)
 
         return self
 
@@ -209,8 +209,11 @@ class BayesOpt(object):
         for i in range(num_steps):
             self.step(**optimizer_kwargs)
             if print_:
-                print(i, self.best_true_y, 'noise {:2.3f}, outputscale={:3.1f}'.format(
-                    self.model.likelihood.noise.item(),
-                    self.model.covar_module.outputscale.item()))
+                print(i, self.best_true_y, '\n\toutputscale={}, \n\tlengthscale(s)={}, \n\tmixins={}'.format(
+                    format_for_str(get_outputscale(self.model.covar_module)),
+                    format_for_str(get_lengthscales(self.model.covar_module)),
+                    format_for_str(get_mixins(self.model.covar_module))
+                ))
         return self
+
 

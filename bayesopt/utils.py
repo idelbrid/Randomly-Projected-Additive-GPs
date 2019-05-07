@@ -2,6 +2,8 @@ from math import pi
 
 import numpy as np
 import torch
+import gpytorch
+import gp_models
 
 def stybtang(x: torch.Tensor):
     return 1/2 * torch.sum(x.pow(4) - 16*x.pow(2) + 5*x, dim=-1)
@@ -70,3 +72,45 @@ def easy_meshgrid(sizes, numpy=False, interior=True):
     if numpy:
         res = res.numpy()
     return res
+
+
+def get_lengthscales(kernel):
+    if isinstance(kernel, gpytorch.kernels.ScaleKernel):
+        return get_lengthscales(kernel.base_kernel)
+    elif kernel.has_lengthscale:
+        return kernel.lengthscale
+    elif isinstance(kernel, gp_models.GeneralizedProjectionKernel):
+        ls = []
+        for k in kernel.kernel.kernels:
+            ls_ = []
+            for kk in k.base_kernel.kernels:
+                ls_.append(kk.lengthscale.item())
+            ls.append(ls_)
+        return ls
+    else:
+        return None
+
+def get_mixins(kernel):
+    if isinstance(kernel, gp_models.GeneralizedProjectionKernel):
+        mixins = []
+        for k in kernel.kernel.kernels:
+            mixins.append(k.outputscale.item())
+        return mixins
+    elif isinstance(kernel, gpytorch.kernels.ScaleKernel):
+        return get_mixins(kernel.base_kernel)
+    else:
+        return None
+
+def format_for_str(num_or_list, decimals=3):
+    if isinstance(num_or_list, list):
+        return [format_for_str(n) for n in num_or_list]
+    elif isinstance(num_or_list, float):
+        return np.round(num_or_list, decimals)
+    else:
+        return ''
+
+def get_outputscale(kernel):
+    if isinstance(kernel, gpytorch.kernels.ScaleKernel):
+        return kernel.outputscale
+    else:
+        return None

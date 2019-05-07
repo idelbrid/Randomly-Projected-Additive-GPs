@@ -1,37 +1,13 @@
 import torch
 import gpytorch
 import torch.nn.functional as F
-from gpytorch.models import ExactGP, AbstractVariationalGP
-from gpytorch.variational import CholeskyVariationalDistribution, VariationalStrategy
-# from gpytorch.lazy.zero_lazy_tensor import ZeroLazyTensor
 from gpytorch.lazy import SumLazyTensor, ConstantMulLazyTensor, lazify, MulLazyTensor
-from typing import Optional, Type
-import numpy as np
-import logging
 import torch.nn as nn
-from torch.utils.data import TensorDataset, DataLoader
+import copy
 
 
 def _sample_from_range(num_samples, range_):
     return torch.rand(num_samples) * (range_[1] - range_[0]) + range_[0]
-
-
-def convert_rp_model_to_additive_model(model, return_proj=True):
-    if isinstance(model.covar_module, gpytorch.kernels.ScaleKernel):
-        rp_kernel = model.covar_module.base_kernel
-    else:
-        rp_kernel = model.covar_module
-    add_kernel = rp_kernel.to_additive_kernel()
-    proj = rp_kernel.projection_module
-    if isinstance(model.covar_module, gpytorch.kernels.ScaleKernel):
-        add_kernel = gpytorch.kernels.ScaleKernel(add_kernel)
-        add_kernel.initialize(outputscale=model.covar_module.outputscale)
-    Z = rp_kernel.projection_module(model.train_inputs[0])
-    res = AdditiveExactGPModel(Z, model.train_targets, model.likelihood, add_kernel)
-    res.mean_module = model.mean_module  # either zero or constant, so doesn't matter if the input is projected.
-    if return_proj:
-        res = (res, proj)
-    return res
 
 
 class DNN(torch.nn.Module):
@@ -130,7 +106,8 @@ class Identity(nn.Module):
 
 class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
     def __init__(self, component_degrees, d, base_kernel, projection_module,
-                 learn_proj=False, weighted=False, ski=False, ski_options=None, X=None, **kernel_kwargs):
+                 learn_proj=False, weighted=False, ski=False, ski_options=None, X=None, lengthscale_prior=None,
+                 outputscale_prior=None, **kernel_kwargs):
         super(GeneralizedProjectionKernel, self).__init__()
 
         self.learn_proj = learn_proj
@@ -170,7 +147,9 @@ class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
                     ad = None
                 else:
                     ad = dim_count
-                bkernel = base_kernel(active_dims=ad, **kernel_kwargs)
+                bkernel = base_kernel(active_dims=ad,
+                                      lengthscale_prior=copy.deepcopy(lengthscale_prior),
+                                      **kernel_kwargs)
                 if ski:
                     bds = None
                     if bounds[dim_count] is not None:
@@ -185,10 +164,12 @@ class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
             # else:
             product_kernel = gpytorch.kernels.ProductKernel(*product_kernels)
             if weighted:
-                product_kernel = gpytorch.kernels.ScaleKernel(product_kernel)
+                product_kernel = gpytorch.kernels.ScaleKernel(product_kernel,
+                                                              outputscale_prior=copy.deepcopy(lengthscale_prior))
                 product_kernel.initialize(outputscale=1/len(component_degrees))
             else:
-                product_kernel = gpytorch.kernels.ScaleKernel(product_kernel)
+                product_kernel = gpytorch.kernels.ScaleKernel(product_kernel,
+                                                              outputscale_prior=copy.deepcopy(lengthscale_prior))
                 product_kernel.initialize(outputscale=1 / len(component_degrees))
                 product_kernel.raw_outputscale.requires_grad = False
             kernels.append(product_kernel)
@@ -284,6 +265,19 @@ class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
                               self.ski, self.ski_options, X=Z, **self.kernel_kwargs)
         res.kernel = self.kernel  # just use the same object. Probably not a good long-term solution.
         return res
+
+    @property
+    def base_kernels(self):
+        kernels = []
+        for k in self.kernel.kernels:
+            for kk in k.base_kernel.kernels:
+                kernels.append(kk)
+        return kernels
+
+    @property
+    def scale_kernels(self):
+        return self.kernel.kernels
+
 
 # TODO: make sure this works right
 # TODO: implement mixtures of products via kernel powers (log(K) ~ a log(k1) + b log(k2) -> K ~ k1^a * k2^b
@@ -476,106 +470,6 @@ class ProjectionKernel(gpytorch.kernels.Kernel):
         return res
 
 
-class ExactGPModel(ExactGP):
-    """Basic exact GP model with const mean and a provided kernel"""
-    def __init__(self, train_x, train_y, likelihood, kernel):
-        super(ExactGPModel, self).__init__(train_x, train_y, likelihood)
-        self.mean_module = gpytorch.means.ConstantMean()
-        self.covar_module = kernel
-
-    def forward(self, x):
-        mean_x = self.mean_module(x)
-        covar_x = self.covar_module(x)
-        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
-
-
-class AdditiveExactGPModel(ExactGPModel):
-    def __init__(self, train_x, train_y, likelihood, kernel):
-        if isinstance(kernel, gpytorch.kernels.ScaleKernel):
-            if not isinstance(kernel.base_kernel, AdditiveKernel):
-                raise ValueError("Not an additive kernel.")
-        else:
-            if not isinstance(kernel, AdditiveKernel):
-                raise ValueError("Not an additive kernel.")
-        super(AdditiveExactGPModel, self).__init__(train_x, train_y, likelihood, kernel)
-
-    def additive_pred(self, x, group=None):  # Pretty sure this should count as a prediction strategy
-        # TODO: implement somehow for RP models as well.
-        if isinstance(self.covar_module, gpytorch.kernels.ScaleKernel):
-            scale = self.covar_module.outputscale
-            add_kernel = self.covar_module.base_kernel
-        elif isinstance(self.covar_module,  AdditiveKernel):
-            scale = torch.tensor(1.0, dtype=torch.float)
-            add_kernel = self.covar_module
-        else:
-            raise NotImplementedError("Only implemented for Additive kernels and Scale kernel wrappings only")
-        train_prior_dist = self.forward(self.train_inputs[0])
-        lik_covar_train_train = self.likelihood(train_prior_dist, self.train_inputs[0]).lazy_covariance_matrix.detach()
-
-        # TODO: cache?
-        K_inv_y = lik_covar_train_train.inv_matmul(self.train_targets)
-
-        def get_pred(k):
-            # is there a better way to handle the scalings?
-            test_train_covar = scale * gpytorch.lazy.delazify(k(x, self.train_inputs[0]))
-            test_test_covar = scale * gpytorch.lazy.delazify(k(x, x))
-            train_test_covar = test_train_covar.transpose(-1, -2)
-            pred_mean = test_train_covar.matmul(K_inv_y)
-            covar_correction_rhs = lik_covar_train_train.inv_matmul(train_test_covar)
-            pred_covar = lazify(torch.addmm(1, test_test_covar, -1, test_train_covar, covar_correction_rhs))
-            return gpytorch.distributions.MultivariateNormal(pred_mean, pred_covar, validate_args=False)
-
-        if group is None:
-            outputs = []
-            for k in add_kernel.kernel.kernels:
-                outputs.append(get_pred(k))
-            return outputs
-        else:
-            return get_pred(add_kernel.kernel.kernels[group])
-
-    def get_groups(self):
-        if isinstance(self.covar_module, gpytorch.kernels.ScaleKernel):
-            add_kernel = self.covar_module.base_kernel
-        else:
-            add_kernel = self.covar_module
-        return add_kernel.groups
-
-
-class ProjectedAdditiveExactGPModel(ExactGPModel):
-    def __init__(self, train_x, train_y, likelihood, kernel):
-        if isinstance(kernel, gpytorch.kernels.ScaleKernel):
-            if not isinstance(kernel.base_kernel, GeneralizedProjectionKernel):
-                raise ValueError("Not an projected additive kernel.")
-        else:
-            if not isinstance(kernel, GeneralizedProjectionKernel):
-                raise ValueError("Not an projected additive kernel.")
-        super(ProjectedAdditiveExactGPModel, self).__init__(train_x, train_y, likelihood, kernel)
-
-    def get_corresponding_additive_model(self, return_proj=True):
-        return convert_rp_model_to_additive_model(self, return_proj=return_proj)
-
-
-class SVGPRegressionModel(AbstractVariationalGP):
-    """SVGP with provided kernel, Cholesky variational prior, and provided inducing points."""
-    def __init__(self, inducing_points, kernel, likelihood):
-        variational_distribution = CholeskyVariationalDistribution(
-            inducing_points.size(0))
-        variational_strategy = VariationalStrategy(self,
-                                                   inducing_points,
-                                                   variational_distribution,
-                                                   learn_inducing_locations=True)
-        super(SVGPRegressionModel, self).__init__(variational_strategy)
-        self.mean_module = gpytorch.means.ConstantMean()
-        self.covar_module = kernel
-        self.likelihood = likelihood
-
-    def forward(self,x):
-        mean_x = self.mean_module(x)
-        covar_x = self.covar_module(x)
-        latent_pred = gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
-        return latent_pred
-
-
 def postprocess_rbf(dist_mat):
     return dist_mat.div_(-2).exp_()
 
@@ -642,87 +536,16 @@ class DuvenaudAdditiveKernel(gpytorch.kernels.Kernel):
         s_k = kern_values.pow(kvals).sum(dim=1)  # should have max_degree # of terms
         # e_n = R x n x n
         # s_k = R x n x n
+        m1 = torch.tensor([-1], dtype=torch.float, device=kern_values.device)
         for deg in range(1, self.max_degree+1):
             # term = torch.zeros(*e_n.shape[1:], device=kern_values.device)  # 1 x n x n
-            for k in range(1, deg+1):
-                e_n[deg].add_((-1)**(k-1) * e_n[deg - k] * s_k[k-1])
-            e_n[deg].div_(deg)
+            ks = torch.arange(1, deg+1, device=kern_values.device, dtype=torch.float).reshape(-1, 1, 1)
+            kslong = torch.arange(1, deg + 1, device=kern_values.device, dtype=torch.long)
+            e_n[deg] = (m1.pow(ks-1) * e_n.index_select(0, deg-kslong) * s_k.index_select(0, kslong-1)).sum(dim=0)
+            # for k in range(1, deg+1):
+            #     e_n[deg].add_((-1)**(k-1) * e_n[deg - k] * s_k[k-1])
+            # e_n[deg].div_(deg)
         return (self.outputscale.reshape(-1, 1, 1) * e_n[1:]).sum(dim=0)
-
-
-def train_to_convergence(model, xs, ys,
-                         optimizer: Optional[Type]=None, lr=0.1, objective=None,
-                         max_iter=100, verbose=0, patience=20,
-                         conv_tol=1e-4, check_conv=True, smooth=True,
-                         isloss=False, batch_size=None):
-    """The core optimization routine
-
-    :param model: the model (usually a GPyTorch model, usually an ExactGP model) to fit
-    :param xs: training x values
-    :param ys: training target values
-    :param optimizer: torch optimizer function to use, e.g. torch.optim.Adam
-    :param lr: learning rate of the local optimizer
-    :param objective: the objective to optimize
-    :param max_iter: maximum number of epochs
-    :param verbose: if 0, produces no output. If 1, produces update per epoch. If 2, outputs per step
-    :param patience: the number of epochs after which, if the objective does not change by the tolerance, we stop
-    :param conv_tol: the tolerance to check for convergence with
-    :param check_conv: if False, train for exactly max_iter epochs
-    :param smooth: If True, use a moving average to smooth the losses over epochs for checking convergence
-    :param isloss: If True, the objective is considered a loss and is minimized. Otherwise, obj is maximized.
-    :param batch_size: If not None, break the data into mini-batches of size batch_size
-    :return:
-    """
-    if optimizer is None:
-        optimizer = torch.optim.LBFGS
-    verbose = int(verbose)
-
-    train_dataset = TensorDataset(xs, ys)
-
-    shuffle = not(batch_size is None)
-    if batch_size is None:
-        batch_size = xs.shape[0]
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle)
-
-    model.train()
-
-    # instantiating optimizer
-    optimizer_ = optimizer(model.parameters(), lr=lr)
-
-    losses = np.zeros((max_iter,))
-    ma = np.zeros((max_iter,))
-    for i in range(max_iter):
-        total_loss = 0
-        for j, (x_batch, y_batch) in enumerate(train_loader):
-            # Define and pass in closure to work with LBFGS, but also works with
-            #     other optimizers like ADAM too.
-            def closure():
-                optimizer_.zero_grad()
-                output = model(x_batch)
-                if isloss:
-                    loss = objective(output, y_batch)
-                else:
-                    loss = -objective(output, y_batch)
-                loss.backward()
-                return loss
-            loss = optimizer_.step(closure).item()
-            if verbose > 1:
-                print("epoch {}, iter {}, loss {}".format(i, j, loss))
-            total_loss = total_loss + loss
-        losses[i] = total_loss
-        ma[i] = losses[i-patience+1:i+1].mean()
-        if verbose > 0:
-            print("epoch {}, loss {}".format(i, total_loss))
-        if check_conv and i >= patience:
-            if smooth and ma[i-patience] - ma[i] < conv_tol:
-                if verbose > 0:
-                    print("Reached convergence at {}, MA {} - {} < {}".format(total_loss, ma[i-patience], ma[i], conv_tol))
-                return i
-            if not smooth and losses[i-patience] - losses[i] < conv_tol:
-                if verbose > 0:
-                    print("Reached convergence at {}, {} - {} < {}".format(total_loss, losses[i-patience], total_loss, conv_tol))
-                return i
-    return max_iter
 
 
 class LinearRegressionModel(torch.nn.Module):
@@ -765,7 +588,3 @@ class ELMModule(torch.nn.Module):
         out = self.linear(hl)
         return out
 
-
-def mean_squared_error(y_pred, y_true):
-    """Helper to calculate MSE"""
-    return ((y_pred - y_true)**2).mean().item()

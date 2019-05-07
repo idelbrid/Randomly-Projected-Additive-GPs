@@ -642,9 +642,11 @@ class TestDuvenaudKernel(TestCase):
         manual_k1 = ScaleKernel(gpytorch.kernels.AdditiveKernel(RBFKernel(active_dims=0),
                                                                RBFKernel(active_dims=1),
                                                                RBFKernel(active_dims=2)))
+        manual_k1.initialize(outputscale=1/3)
         manual_k2 = ScaleKernel(gpytorch.kernels.AdditiveKernel(RBFKernel(active_dims=[0,1]),
                                                                 RBFKernel(active_dims=[1,2]),
                                                                 RBFKernel(active_dims=[0,2])))
+        manual_k2.initialize(outputscale=1/3)
         manual_k = gpytorch.kernels.AdditiveKernel(manual_k1, manual_k2)
         manual_add_k_val = manual_k(testvals, testvals).evaluate()
 
