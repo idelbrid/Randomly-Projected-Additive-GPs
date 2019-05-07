@@ -9,7 +9,7 @@ from botorch import fit_gpytorch_model
 from botorch.optim.fit import fit_gpytorch_torch
 from botorch.optim import joint_optimize
 from .utils import get_lengthscales, get_mixins, format_for_str, get_outputscale
-
+from fitting.optimizing import train_to_convergence
 # TODO: implement Add-EI
 # TODO: implement similar for random projections.
 # TODO: move to construct entirely new GP at that time.
@@ -85,6 +85,8 @@ class BayesOpt(object):
                  init_method='latin_hc',
                  gp_optim_freq=None,
                  from_scratch_freq=1e5,
+                 gp_optim_method='botorch_scipy',
+                 gp_optim_options=dict()
                  ):
         self.obj_fxn = obj_fxn
         self.bounds = torch.as_tensor(bounds, dtype=torch.float)
@@ -104,9 +106,13 @@ class BayesOpt(object):
         self._obsY_std = None
         self._n = 0
 
+
         self._initialized = False
         self.gp_optim_freq = gp_optim_freq
+        self.gp_optim_method = gp_optim_method
+        self.gp_optim_options = gp_optim_options
         self.from_scratch_freq = from_scratch_freq
+
 
     def descale_y(self, y):
         return y / self._obsY_std
@@ -166,9 +172,13 @@ class BayesOpt(object):
         if need_to_refit:
             self.model.train()
             mll = gpytorch.mlls.ExactMarginalLogLikelihood(self.model.likelihood, self.model)
-            fit_gpytorch_model(mll, optimizer=fit_gpytorch_torch)
-            # gp_models.train_to_convergence(self.model, self.obsX, self.obsY,
-            #                                objective=mll, **self.gp_optim_options)
+            if self.gp_optim_method == 'botorch_torch':
+                fit_gpytorch_model(mll, optimizer=fit_gpytorch_torch)
+            elif self.gp_optim_method == 'botorch_scipy':
+                fit_gpytorch_model(mll)
+            elif self.gp_optim_method == 'torch':
+                train_to_convergence(self.model, self.obsX, self.obsY,
+                                     objective=mll, **self.gp_optim_options)
         self.model.eval()
         return self.model
 
