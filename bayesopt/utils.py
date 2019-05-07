@@ -41,6 +41,7 @@ def mixture_of_gaussians(x: torch.Tensor, mixtures, degree, sigma):
 
 
 def random_branin(x: torch.Tensor):
+    """Branin randomly embedded into 2 dims of a larger vector"""
     d = x.shape[-1]
     torch.random.manual_seed(123456)
     i = torch.randint(0, d)
@@ -56,6 +57,14 @@ def branin(x: torch.Tensor):
     comp1 = (x2 - 5.1 / (4 * pi**2) * x1.pow(2) + 5/pi * x1 - 6).pow(2)
     comp2 = 10*(1-1/(8*pi))*torch.cos(x1) + 10
     return comp1 + comp2
+
+
+def embed_function(f, f_dim, new_dim, A=None):
+    if A is None:
+        A = torch.randn(new_dim, f_dim)
+    def new_f(x):
+        return f(x.matmul(A))
+    return new_f
 
 
 def easy_meshgrid(sizes, numpy=False, interior=True):
@@ -90,6 +99,7 @@ def get_lengthscales(kernel):
     else:
         return None
 
+
 def get_mixins(kernel):
     if isinstance(kernel, gp_models.GeneralizedProjectionKernel):
         mixins = []
@@ -101,6 +111,7 @@ def get_mixins(kernel):
     else:
         return None
 
+
 def format_for_str(num_or_list, decimals=3):
     if isinstance(num_or_list, list):
         return [format_for_str(n) for n in num_or_list]
@@ -108,6 +119,7 @@ def format_for_str(num_or_list, decimals=3):
         return np.round(num_or_list, decimals)
     else:
         return ''
+
 
 def get_outputscale(kernel):
     if isinstance(kernel, gpytorch.kernels.ScaleKernel):
