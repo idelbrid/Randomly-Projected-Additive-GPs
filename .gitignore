@@ -7,4 +7,5 @@ data/*
 datasets/*
 uci/*
 __pycache__/*
-
+*.csv
+*.pyc
