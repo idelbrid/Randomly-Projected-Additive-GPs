@@ -347,129 +347,6 @@ class StrictlyAdditiveKernel(AdditiveKernel):
                                              X=X, **kernel_kwargs)
 
 
-class ProjectionKernel(gpytorch.kernels.Kernel):
-    def __init__(self, J, k, d, base_kernels, Ws, bs, activation=None,
-                 active_dims=None, learn_proj=False, weighted=False, multiplicative=False):
-        """
-
-        :param J: Number of independent subkernels
-        :param k: Dimension to project into
-        :param d: Dimension to project from
-        :param base_kernels: Kernel function for each subkernel
-        :param Ws: List of projection (weight) matrices
-        :param bs: List of offset (bias) vectors (could be 0s)
-        :param activation: If not None, apply a nonlinear fxn after projection
-        :param active_dims: not used ATM
-        :param learn_proj: if true, consider Ws and bs tunable parameters. Otherwise, keep them static.
-        :param weighted: if true, learn scale of kernels independently
-        """
-        super(ProjectionKernel, self).__init__(active_dims=active_dims)
-        if not len(base_kernels) == J:
-            raise Exception("Number of kernels does not match J")
-        if not len(Ws) == J and len(bs) == J:
-            raise Exception("Number of weight matrices and/or number of "
-                            "bias vectors does not match J")
-        if not Ws[0].shape[0] == d:
-            raise Exception("Weight matrix 0 number of rows does not match d")
-        if not Ws[0].shape[1] == k:
-            raise Exception("Weight matrix 0 number of columns does not match k")
-
-        # Register parameters for autograd if learn_proj. Othwerise, don't.
-        self.learn_proj = learn_proj
-        if self.learn_proj:
-            for i in range(len(Ws)):
-                self.register_parameter('W_{}'.format(i), torch.nn.Parameter(Ws[i]))
-                self.register_parameter('b_{}'.format(i), torch.nn.Parameter(bs[i]))
-        else:
-            for i in range(len(Ws)):
-                self.__setattr__('W_{}'.format(i), Ws[i])
-                self.__setattr__('b_{}'.format(i), bs[i])
-
-        self.activation = activation
-        # scale each kernel individually if setting "weighted" to true.
-        if weighted:
-            for i in range(J):
-                base_kernels[i] = gpytorch.kernels.ScaleKernel(base_kernels[i])
-        self.base_kernels = torch.nn.ModuleList(base_kernels)
-        self.d = d
-        self.J = J
-        self.k = k
-        self.weighted = weighted
-        self.multiplicative = multiplicative
-        self.last_x1 = None
-        self.cached_projections = None
-
-
-    @property
-    def Ws(self):
-        """Convenience for getting the individual parameters/attributes."""
-        toreturn = []
-        i = 0
-        while hasattr(self, 'W_{}'.format(i)):
-            toreturn.append(self.__getattr__('W_{}'.format(i)))
-            i += 1
-        return toreturn
-
-    @property
-    def bs(self):
-        """Convenience for getting individual parameters/attributes."""
-        toreturn = []
-        i = 0
-        while hasattr(self, 'b_{}'.format(i)):
-            toreturn.append(self.__getattr__('b_{}'.format(i)))
-            i += 1
-        return toreturn
-
-    def _project(self, x):
-        """Project matrix x with (multiple) random projections"""
-        projections = []
-        for j in range(self.J):
-            linear_projection = x.matmul(self.Ws[j]) + self.bs[j].unsqueeze(0)
-            if self.activation is None:
-                projections.append(linear_projection)
-            elif self.activation == 'sigmoid':
-                projections.append(
-                    torch.nn.functional.sigmoid(linear_projection)
-                )
-            else:
-                raise ValueError("Unimplemented activation function")
-
-        return projections
-
-    def forward(self, x1, x2, **params):
-        # Don't cache proj if weights are changing
-        if not self.learn_proj:
-            # if x1 is the same, don't re-project
-            if self.last_x1 is not None and torch.equal(x1, self.last_x1):
-                x1_projections = self.cached_projections
-            else:
-                x1_projections = self._project(x1)
-                self.last_x1 = x1
-                self.cached_projections = x1_projections
-        else:
-            x1_projections = self._project(x1)
-        # if x2 is x1, which is common, don't re-project.
-        if torch.equal(x1, x2):
-            x2_projections = x1_projections
-        else:
-            x2_projections = self._project(x2)
-
-        base_kernels = []
-        for j in range(self.J):
-            # lazy tensor wrapper for kernel evaluation
-            k = lazify(self.base_kernels[j](x1_projections[j],
-                                            x2_projections[j], **params))
-            # Multiply each kernel by constant 1/J
-            base_kernels.append(ConstantMulLazyTensor(k, 1/self.J))
-        # Sum lazy tensor for efficient computations...
-        if self.multiplicative:
-            res = MulLazyTensor(*base_kernels)
-        else:
-            res = SumLazyTensor(*base_kernels)
-
-        return res
-
-
 def postprocess_rbf(dist_mat):
     return dist_mat.div_(-2).exp_()
 
@@ -587,4 +464,16 @@ class ELMModule(torch.nn.Module):
             raise ValueError
         out = self.linear(hl)
         return out
+
+
+class ProjectionKernel(gpytorch.kernels.Kernel):
+    def __init__(self, projection_module, base_kernel):
+        super(ProjectionKernel, self).__init__()
+        self.projection_module = projection_module
+        self.base_kernel = base_kernel
+
+    def forward(self, x1, x2, **params):
+        x1 = self.projection_module(x1)
+        x2 = self.projection_module(x2)
+        return self.base_kernel(x1, x2, **params)
 
