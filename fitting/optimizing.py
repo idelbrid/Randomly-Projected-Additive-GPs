@@ -3,7 +3,11 @@ from typing import Optional, Type
 import numpy as np
 import torch
 from torch.utils.data import TensorDataset, DataLoader
-
+from gp_models.kernels import ProjectionKernel
+from gp_models.models import ExactGPModel
+from gpytorch.likelihoods import GaussianLikelihood
+from gpytorch.mlls import ExactMarginalLogLikelihood
+from gpytorch.kernels import AdditiveKernel
 
 def train_to_convergence(model, xs, ys,
                          optimizer: Optional[Type]=None, lr=0.1, objective=None,
@@ -85,5 +89,40 @@ def mean_squared_error(y_pred, y_true):
     return ((y_pred - y_true)**2).mean().item()
 
 
-def learn_projections(model, xs, ys):
-    pass
+def learn_projections(base_kernels, xs, ys, max_projections=10,
+                      mse_threshold=0.0001, post_fit=False):
+    n, d = xs.shape
+    residuals = ys
+    models = []
+    for i in range(max_projections):
+        with torch.no_grad():
+            coef = torch.pinverse(xs).matmul(residuals)
+
+        base_kernel = base_kernels[i]
+        projection = torch.nn.Linear(d, 1, bias=False)
+        projection.weight.data = coef
+        kernel = ProjectionKernel(projection, base_kernel)
+        model = ExactGPModel(xs, residuals,
+                             GaussianLikelihood(), kernel)
+        mll = ExactMarginalLogLikelihood(model.likelihood, model)
+        # mll.train()
+        model.train()
+        train_to_convergence(model, xs, residuals, torch.optim.Adam,
+                             objective=mll, max_iter=1000)
+
+        model.eval()
+        models.append(model)
+        with torch.no_grad():
+            residuals = residuals - model(xs).mean
+            mse = (residuals ** 2).mean()
+            print(mse)
+            if mse < mse_threshold:
+                break
+    joint_kernel = AdditiveKernel(*[model.covar_module for model in models])
+    joint_model = ExactGPModel(xs, ys, GaussianLikelihood(), joint_kernel)
+
+    if post_fit:
+        mll = ExactMarginalLogLikelihood(joint_model.likelihood,joint_model)
+        train_to_convergence(joint_model, xs, ys, torch.optim.Adam, objective=mll)
+
+    return joint_model
