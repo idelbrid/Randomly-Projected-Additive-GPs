@@ -166,7 +166,7 @@ class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
             product_kernel = gpytorch.kernels.ProductKernel(*product_kernels)
             if weighted:
                 product_kernel = gpytorch.kernels.ScaleKernel(product_kernel,
-                                                              outputscale_prior=copy.deepcopy(lengthscale_prior))
+                                                              outputscale_prior=copy.deepcopy(outputscale_prior))
                 product_kernel.initialize(outputscale=1/len(component_degrees))
             else:
                 product_kernel = gpytorch.kernels.ScaleKernel(product_kernel,
@@ -322,7 +322,6 @@ class RPPolyKernel(PolynomialProjectionKernel):
         super(RPPolyKernel, self).__init__(J, k, d, base_kernel, projs, bs, activation=activation,
                                            learn_proj=learn_proj, weighted=weighted, ski=ski, ski_options=ski_options,
                                            X=X, **kernel_kwargs)
-
 
 
 class AdditiveKernel(GeneralizedProjectionKernel):
