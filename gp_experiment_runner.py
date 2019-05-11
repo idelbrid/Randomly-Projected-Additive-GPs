@@ -353,9 +353,15 @@ if __name__ == '__main__':
                 for j in jlist:
                     if args.ablation:
                         options['model_kwargs']['J'] = j
-                    results = run_experiment(training_routines.train_exact_gp, options,
-                                   dataset, split=args.split, cv=args.cv, repeats=args.repeats,
-                                             normalize_using_train=True)
+
+                    if options['kind'] == 'ppr_gp':
+                        options.pop('kind')
+                        results = run_experiment(training_routines.train_ppr_gp, options, dataset, split=args.split,
+                                                 cv=args.cv, repeats=args.repeats, normalize_using_train=True)
+                    else:
+                        results = run_experiment(training_routines.train_exact_gp, options,
+                                       dataset, split=args.split, cv=args.cv, repeats=args.repeats,
+                                                 normalize_using_train=True)
                     if args.ablation:
                         results['J'] = j
                     results['dataset'] = dataset

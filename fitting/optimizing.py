@@ -90,7 +90,7 @@ def mean_squared_error(y_pred, y_true):
 
 
 def learn_projections(base_kernels, xs, ys, max_projections=10,
-                      mse_threshold=0.0001, post_fit=False):
+                      mse_threshold=0.0001, post_fit=False, **optim_kwargs):
     n, d = xs.shape
     residuals = ys
     models = []
@@ -99,30 +99,31 @@ def learn_projections(base_kernels, xs, ys, max_projections=10,
             coef = torch.pinverse(xs).matmul(residuals)
 
         base_kernel = base_kernels[i]
-        projection = torch.nn.Linear(d, 1, bias=False)
+        projection = torch.nn.Linear(d, 1, bias=False).to(xs)
         projection.weight.data = coef
         kernel = ProjectionKernel(projection, base_kernel)
         model = ExactGPModel(xs, residuals,
-                             GaussianLikelihood(), kernel)
-        mll = ExactMarginalLogLikelihood(model.likelihood, model)
+                             GaussianLikelihood(), kernel).to(xs)
+        mll = ExactMarginalLogLikelihood(model.likelihood, model).to(xs)
         # mll.train()
         model.train()
-        train_to_convergence(model, xs, residuals, torch.optim.Adam,
-                             objective=mll, max_iter=1000)
+        train_to_convergence(model, xs, residuals,
+                             objective=mll, **optim_kwargs)
 
         model.eval()
         models.append(model)
         with torch.no_grad():
             residuals = residuals - model(xs).mean
             mse = (residuals ** 2).mean()
-            print(mse)
+            print(mse.item(), end='; ')
             if mse < mse_threshold:
                 break
+    print()
     joint_kernel = AdditiveKernel(*[model.covar_module for model in models])
     joint_model = ExactGPModel(xs, ys, GaussianLikelihood(), joint_kernel)
 
     if post_fit:
         mll = ExactMarginalLogLikelihood(joint_model.likelihood,joint_model)
-        train_to_convergence(joint_model, xs, ys, torch.optim.Adam, objective=mll)
+        train_to_convergence(joint_model, xs, ys, objective=mll, **optim_kwargs)
 
     return joint_model

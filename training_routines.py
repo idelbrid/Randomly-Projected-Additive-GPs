@@ -5,7 +5,7 @@ from gp_models import ExactGPModel, ProjectionKernel, \
     GeneralizedPolynomialProjectionKernel, GeneralizedProjectionKernel, StrictlyAdditiveKernel, AdditiveKernel, DuvenaudAdditiveKernel
 from gp_models.kernels import ManualRescaleProjectionKernel
 import gpytorch
-from gpytorch.kernels import ScaleKernel, RBFKernel, GridInterpolationKernel
+from gpytorch.kernels import ScaleKernel, RBFKernel, GridInterpolationKernel, MaternKernel
 from gpytorch.mlls import VariationalELBO, VariationalMarginalLogLikelihood
 from gp_models import SVGPRegressionModel
 import torch
@@ -13,7 +13,7 @@ import warnings
 import copy
 import numpy as np
 from itertools import combinations
-from fitting.optimizing import train_to_convergence, mean_squared_error
+from fitting.optimizing import train_to_convergence, mean_squared_error, learn_projections
 
 def _map_to_optim(optimizer):
     """Helper to map optimizer string names to torch objects"""
@@ -128,7 +128,7 @@ def create_additive_rp_kernel(d, J, learn_proj=False, kernel_type='RBF', space_p
     if ard:
         if prescale:
             ard_num_dims = d
-
+            # print('prescaling')
         else:
             ard_num_dims = J
         initial_ls = _sample_from_range(ard_num_dims, init_lengthscale_range)
@@ -535,6 +535,60 @@ def create_exact_gp(trainX, trainY, kind, **kwargs):
     kernel = gpytorch.kernels.ScaleKernel(kernel)
     model = ExactGPModel(trainX, trainY, likelihood, kernel)
     return model, likelihood
+
+
+def train_ppr_gp(trainX, trainY, testX, testY, model_kwargs, train_kwargs, device='cpu',
+                 skip_posterior_variances=False):
+    model_kwargs = copy.copy(model_kwargs)
+    train_kwargs = copy.copy(train_kwargs)
+    d = trainX.shape[-1]
+    device = torch.device(device)
+    trainX = trainX.to(device)
+    trainY = trainY.to(device)
+    testX = testX.to(device)
+    testY = testY.to(device)
+
+    kernel_type = model_kwargs.pop('kernel_type', 'RBF')
+    if kernel_type == 'RBF':
+        kernels = [RBFKernel() for _ in range(10)]
+    elif kernel_type == 'Matern':
+        kernels = [MaternKernel(nu=1.5) for _ in range(10)]
+    else:
+        raise ValueError("Unknown kernel type")
+    if len(model_kwargs) > 0:
+        warnings.warn("Not all model kwargs are used: {}".format(list(model_kwargs.keys())))
+
+    optimizer_ = _map_to_optim(train_kwargs.pop('optimizer'))
+
+    model = learn_projections(kernels, trainX, trainY, optimizer=optimizer_, **train_kwargs)
+    likelihood = model.likelihood
+    mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
+    model.eval()
+    likelihood.eval()
+    mll.eval()
+
+    model_metrics = dict()
+    with torch.no_grad():
+        model.train()  # consider prior for evaluation on train dataset
+        likelihood.train()
+        train_outputs = model(trainX)
+        model_metrics['prior_train_nmll'] = -mll(train_outputs, trainY).item()
+
+        with gpytorch.settings.skip_posterior_variances(skip_posterior_variances):
+            model.eval()  # Now consider posterior distributions
+            likelihood.eval()
+            train_outputs = model(trainX)
+            test_outputs = model(testX)
+            if not skip_posterior_variances:
+                model_metrics['train_nll'] = -likelihood(train_outputs).log_prob(
+                    trainY).item()
+                model_metrics['test_nll'] = -likelihood(test_outputs).log_prob(
+                    testY).item()
+            model_metrics['train_mse'] = mean_squared_error(train_outputs.mean,
+                                                            trainY)
+
+    model_metrics['state_dict_file'] = _save_state_dict(model)
+    return model_metrics, test_outputs.mean.to('cpu'), model
 
 
 # TODO: raise a warning if somewhat important options are missing.
