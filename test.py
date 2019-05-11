@@ -1,12 +1,13 @@
 from unittest import TestCase
 from gp_models import ProjectionKernel, PolynomialProjectionKernel, ExactGPModel, GeneralizedPolynomialProjectionKernel
 from gp_models import AdditiveKernel, StrictlyAdditiveKernel, convert_rp_model_to_additive_model, DuvenaudAdditiveKernel
+from gp_models import ManualRescaleProjectionKernel
 from rp import gen_rp, space_equally
 from gp_experiment_runner import load_dataset, _normalize_by_train, _access_fold, _determine_folds
 import torch
 import torch.nn.functional as F
 import gpytorch
-from gpytorch.kernels import RBFKernel, ScaleKernel
+from gpytorch.kernels import RBFKernel, ScaleKernel, AdditiveStructureKernel
 import numpy as np
 import pandas as pd
 
@@ -659,3 +660,96 @@ class TestDuvenaudKernel(TestCase):
 
         testvals = torch.tensor([[2, 3], [5, 2]], dtype=torch.float)
         add_k_val = AddK(testvals, testvals).evaluate()
+
+
+class TestManualRescaleKernel(TestCase):
+    def test_prescale(self):
+        x = torch.tensor([[1., 2., 3.], [1.1, 2.2, 3.3]])
+        kbase = RBFKernel()
+        kbase.initialize(lengthscale=torch.tensor([1.]))
+        base_kernel = AdditiveStructureKernel(kbase, 3)
+        proj_module = torch.nn.Linear(3, 3, bias=False)
+        proj_module.weight.data = torch.eye(3, dtype=torch.float)
+        proj_kernel = ManualRescaleProjectionKernel(proj_module, base_kernel, prescale=True, ard_num_dims=3)
+        proj_kernel.initialize(lengthscale=torch.tensor([1., 2., 3.]))
+
+        with torch.no_grad():
+            K = proj_kernel(x, x).evaluate()
+
+        k = RBFKernel()
+        k.initialize(lengthscale=torch.tensor([1.]))
+
+        with torch.no_grad():
+            K2 = 3*k(x[:, 0:1], x[:, 0:1]).evaluate()
+
+        np.testing.assert_allclose(K.numpy(), K2.numpy())
+
+    def test_postscale(self):
+        x = torch.tensor([[1., 2., 3.], [1.1, 2.2, 3.3]])
+        kbase = RBFKernel()
+        kbase.initialize(lengthscale=torch.tensor([1.]))
+        base_kernel = AdditiveStructureKernel(kbase, 3)
+        proj_module = torch.nn.Linear(3, 3, bias=False)
+        proj_module.weight.data = torch.eye(3, dtype=torch.float)
+        proj_kernel = ManualRescaleProjectionKernel(proj_module, base_kernel, prescale=False, ard_num_dims=3)
+        proj_kernel.initialize(lengthscale=torch.tensor([1., 2., 3.]))
+
+        with torch.no_grad():
+            K = proj_kernel(x, x).evaluate()
+
+        k = RBFKernel()
+        k.initialize(lengthscale=torch.tensor([1.]))
+
+        with torch.no_grad():
+            K2 = 3 * k(x[:, 0:1], x[:, 0:1]).evaluate()
+
+        np.testing.assert_allclose(K.numpy(), K2.numpy())
+
+
+    def test_gradients(self):
+        x = torch.tensor([[1., 2., 3.], [1.1, 2.2, 3.3]])
+        y = torch.sin(x).sum(dim=1)
+        kbase = RBFKernel()
+        kbase.initialize(lengthscale=torch.tensor([1.]))
+        base_kernel = AdditiveStructureKernel(kbase, 3)
+        proj_module = torch.nn.Linear(3, 3, bias=False)
+        proj_module.weight.data = torch.eye(3, dtype=torch.float)
+        proj_kernel = ManualRescaleProjectionKernel(proj_module, base_kernel, prescale=True, ard_num_dims=3)
+        proj_kernel.initialize(lengthscale=torch.tensor([1., 2., 3.]))
+
+        model = ExactGPModel(x, y, gpytorch.likelihoods.GaussianLikelihood(), proj_kernel)
+        mll = gpytorch.mlls.ExactMarginalLogLikelihood(model.likelihood, model)
+        optimizer_ = torch.optim.Adam(model.parameters(), lr=0.1)
+        optimizer_.zero_grad()
+
+        pred = model(x)
+        loss = -mll(pred, y)
+        loss.backward()
+
+        optimizer_.step()
+
+        np.testing.assert_allclose(proj_kernel.base_kernel.base_kernel.lengthscale.numpy(), torch.tensor([[1.]]).numpy())
+        np.testing.assert_allclose(proj_kernel.projection_module.weight.numpy(), torch.eye(3, dtype=torch.float).numpy())
+        self.assertFalse(np.allclose(proj_kernel.lengthscale.detach().numpy(), torch.tensor([1., 2., 3.]).numpy()))
+
+        proj_module = torch.nn.Linear(3, 3, bias=False)
+        proj_module.weight.data = torch.eye(3, dtype=torch.float)
+        proj_kernel2 = ManualRescaleProjectionKernel(proj_module, base_kernel, prescale=True, ard_num_dims=3,
+                                                     learn_proj=True)
+
+        proj_kernel2.initialize(lengthscale=torch.tensor([1., 2., 3.]))
+
+        model = ExactGPModel(x, y, gpytorch.likelihoods.GaussianLikelihood(), proj_kernel2)
+        mll = gpytorch.mlls.ExactMarginalLogLikelihood(model.likelihood, model)
+        optimizer_ = torch.optim.Adam(model.parameters(), lr=0.1)
+        optimizer_.zero_grad()
+
+        pred = model(x)
+        loss = -mll(pred, y)
+        loss.backward()
+
+        optimizer_.step()
+
+        np.testing.assert_allclose(proj_kernel2.base_kernel.base_kernel.lengthscale.numpy(), torch.tensor([[1.]]).numpy())
+        self.assertFalse(np.allclose(proj_kernel2.projection_module.weight.detach().numpy(), torch.eye(3, dtype=torch.float).numpy()))
+        self.assertFalse(np.allclose(proj_kernel2.lengthscale.detach().numpy(), torch.tensor([1., 2., 3.]).numpy()))

@@ -494,3 +494,34 @@ class ProjectionKernel(gpytorch.kernels.Kernel):
         x2 = self.projection_module(x2)
         return self.base_kernel(x1, x2, **params)
 
+
+# TODO: clean up this set of code; a lot of repeated stuff.
+
+class ManualRescaleProjectionKernel(gpytorch.kernels.Kernel):
+    def __init__(self, projection_module, base_kernel, prescale=False, ard_num_dims=None, learn_proj=False, **kwargs):
+        super(ManualRescaleProjectionKernel, self).__init__(has_lengthscale=True, ard_num_dims=ard_num_dims, **kwargs)
+        self.projection_module = projection_module
+        self.learn_proj = learn_proj
+        if not self.learn_proj:
+            for param in self.projection_module.parameters():
+                param.requires_grad = False
+
+        self.base_kernel = base_kernel
+        for param in self.base_kernel.parameters():
+            param.requires_grad = False
+
+        self.prescale = prescale
+
+    def forward(self, x1, x2, diag=False, last_dim_is_batch=False, **params):
+        if self.prescale:
+            x1 = x1.div(self.lengthscale)
+            x2 = x2.div(self.lengthscale)
+
+        x1 = self.projection_module(x1)
+        x2 = self.projection_module(x2)
+
+        if not self.prescale:
+            x1 = x1.div(self.lengthscale)
+            x2 = x2.div(self.lengthscale)
+
+        return self.base_kernel(x1, x2, **params)
