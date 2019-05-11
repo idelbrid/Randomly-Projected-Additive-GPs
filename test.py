@@ -2,6 +2,7 @@ from unittest import TestCase
 from gp_models import ProjectionKernel, PolynomialProjectionKernel, ExactGPModel, GeneralizedPolynomialProjectionKernel
 from gp_models import AdditiveKernel, StrictlyAdditiveKernel, convert_rp_model_to_additive_model, DuvenaudAdditiveKernel
 from gp_models import ManualRescaleProjectionKernel
+from gp_models.models import AdditiveExactGPModel, ProjectedAdditiveExactGPModel
 from rp import gen_rp, space_equally
 from gp_experiment_runner import load_dataset, _normalize_by_train, _access_fold, _determine_folds
 import torch
@@ -105,97 +106,6 @@ class TestRPGenerator(TestCase):
         proj = real_data.matmul(W)
         dists = pairwise_distance(proj, proj)
         self.assertLess((real_dists - dists).abs().mean() / fake_dists.abs().mean(), 0.1)  # no strict guarantee...
-
-
-class TestProjectionKernel(TestCase):
-    def setUp(self):
-        self.k = 2
-        self.d = real_d
-        self.J = 3
-        self.Ws = [torch.eye(real_d, 2) for _ in range(self.J)]
-        self.bs = [torch.zeros(2) for _ in range(self.J)]
-        self.base_kernels = [gpytorch.kernels.RBFKernel() for _ in range(self.J)]
-
-    def test_init(self):
-        kernel = ProjectionKernel(self.J, self.k, self.d, self.base_kernels, self.Ws, self.bs)
-        param_dict = dict()
-        for name, param in kernel.named_parameters():
-            param_dict[name] = param
-        self.assertEqual(len(param_dict), self.J)
-        self.assertEqual(param_dict['base_kernels.1.raw_lengthscale'], 0)
-        self.assertIn('base_kernels.0.raw_lengthscale', param_dict.keys())
-        self.assertIn('base_kernels.2.raw_lengthscale', param_dict.keys())
-
-    def test_forward(self):
-        kernel = ProjectionKernel(self.J, self.k, self.d, self.base_kernels, self.Ws, self.bs)
-        output = kernel(real_data, real_data)
-        self.assertIsInstance(output, gpytorch.lazy.LazyEvaluatedKernelTensor)
-        evl = output.evaluate_kernel()
-        self.assertIsInstance(evl, gpytorch.lazy.SumLazyTensor)
-        self.assertIsInstance(evl.lazy_tensors[0], gpytorch.lazy.ConstantMulLazyTensor)
-
-        K_proj = output.evaluate()
-
-        k1 = gpytorch.kernels.RBFKernel()
-        k2 = gpytorch.kernels.RBFKernel()
-        k3 = gpytorch.kernels.RBFKernel()
-        equivalent = k1(real_data[:, :2]) + k2(real_data[:, :2]) + k3(real_data[:, :2])
-        K_eq = equivalent.evaluate() / 3
-
-        indices = np.random.choice(np.array(real_n), size=10)
-        for i in indices:
-            self.assertAlmostEqual(K_proj[i, 0].detach().numpy(), K_eq[i, 0].detach().numpy(), places=5)
-
-    def test_caching(self):
-        kernel = ProjectionKernel(self.J, self.k, self.d, self.base_kernels, self.Ws, self.bs)
-        self.assertIsNone(kernel.last_x1)
-        self.assertIsNone(kernel.cached_projections)
-        _ = kernel(real_data, real_data).evaluate_kernel()
-        self.assertIsNotNone(kernel.last_x1)
-        self.assertIsNotNone(kernel.cached_projections)
-        new = kernel(real_data[:10], real_data[:10]).evaluate()
-        self.assertEqual(kernel.last_x1.numel(), real_data[:10].numel())
-        self.assertEqual(new.numel(), 100)
-
-    def test_activation(self):
-        kernel = ProjectionKernel(self.J, self.k, self.d, self.base_kernels, self.Ws, self.bs, activation='sigmoid')
-        output = kernel(real_data, real_data)
-        K_proj = output.evaluate()
-
-        k1 = gpytorch.kernels.RBFKernel()
-        k2 = gpytorch.kernels.RBFKernel()
-        k3 = gpytorch.kernels.RBFKernel()
-        sig = torch.sigmoid(real_data[:, :2])
-        equivalent = k1(sig) + k2(sig) + k3(sig)
-        K_eq = equivalent.evaluate() / 3
-
-        indices = np.random.choice(np.array(real_n), size=10)
-        for i in indices:
-            self.assertAlmostEqual(K_proj[i, 0].detach().numpy(), K_eq[i, 0].detach().numpy(), places=5)
-
-    def test_weighted(self):
-        kernel = ProjectionKernel(self.J, self.k, self.d, self.base_kernels, self.Ws, self.bs, weighted=True)
-        param_dict = dict()
-        for name, param in kernel.named_parameters():
-            param_dict[name] = param
-        self.assertEqual(len(param_dict), self.J*2)
-        self.assertEqual(param_dict['base_kernels.1.base_kernel.raw_lengthscale'], 0)
-        self.assertEqual(param_dict['base_kernels.1.raw_outputscale'], 0)
-
-    def test_learn_proj(self):
-        kernel = ProjectionKernel(self.J, self.k, self.d, self.base_kernels, self.Ws, self.bs, learn_proj=True)
-        self.assertIsNone(kernel.last_x1)
-        self.assertIsNone(kernel.cached_projections)
-        _ = kernel(real_data, real_data).evaluate_kernel()
-        self.assertIsNone(kernel.last_x1)
-        self.assertIsNone(kernel.cached_projections)
-
-        param_dict = dict()
-        for name, param in kernel.named_parameters():
-            param_dict[name] = param
-        self.assertEqual(len(param_dict), self.J*(3))  # lengthscale, W, and b.
-
-    pass
 
 
 class TestPolyProjectionKernel(TestCase):
@@ -480,7 +390,7 @@ class TestAdditivePredictions(TestCase):
         testXdiff = torch.tensor([[1, 0]], dtype=torch.float)
 
         kernel(trainX, testXdiff).evaluate()
-        model = ExactGPModel(trainX, trainY, lik, kernel)
+        model = AdditiveExactGPModel(trainX, trainY, lik, kernel)
 
         model.eval()
         equi_pred = model.additive_pred(testXequi)
@@ -502,7 +412,7 @@ class TestAdditivePredictions(TestCase):
         kernel = StrictlyAdditiveKernel(2, RBFKernel)
         lik = gpytorch.likelihoods.GaussianLikelihood().to(dtype=torch.float)
         kernel = kernel.to(dtype=torch.float)
-        model = ExactGPModel(trainX, trainY, lik, kernel)
+        model = AdditiveExactGPModel(trainX, trainY, lik, kernel)
         testXmuchlarger = torch.rand(2000, 10, dtype=torch.float)
         preds = model.additive_pred(testXmuchlarger)
         for p in preds:
@@ -517,7 +427,7 @@ class TestAdditivePredictions(TestCase):
         testXdiff = torch.tensor([[1, 0]], dtype=torch.float)
 
         kernel(trainX, testXdiff).evaluate()
-        model = ExactGPModel(trainX, trainY, lik, kernel)
+        model = AdditiveExactGPModel(trainX, trainY, lik, kernel)
 
         model.eval()
         equi_pred = model.additive_pred(testXequi)
@@ -539,7 +449,7 @@ class TestAdditivePredictions(TestCase):
         kernel = ScaleKernel(StrictlyAdditiveKernel(2, RBFKernel))
         lik = gpytorch.likelihoods.GaussianLikelihood().to(dtype=torch.float)
         kernel = kernel.to(dtype=torch.float)
-        model = ExactGPModel(trainX, trainY, lik, kernel)
+        model = AdditiveExactGPModel(trainX, trainY, lik, kernel)
         testXmuchlarger = torch.rand(2000, 10, dtype=torch.float)
         preds = model.additive_pred(testXmuchlarger)
         for p in preds:
