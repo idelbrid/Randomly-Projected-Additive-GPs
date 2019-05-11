@@ -3,6 +3,7 @@ import rp
 from gp_models import ExactGPModel, ProjectionKernel, \
     LinearRegressionModel, PolynomialProjectionKernel, DNN,\
     GeneralizedPolynomialProjectionKernel, GeneralizedProjectionKernel, StrictlyAdditiveKernel, AdditiveKernel, DuvenaudAdditiveKernel
+from gp_models.kernels import ManualRescaleProjectionKernel
 import gpytorch
 from gpytorch.kernels import ScaleKernel, RBFKernel, GridInterpolationKernel
 from gpytorch.mlls import VariationalELBO, VariationalMarginalLogLikelihood
@@ -101,6 +102,44 @@ def create_rp_poly_kernel(d, k, J, activation=None,
                                         weighted=weighted, ski=ski, ski_options=ski_options, X=X, **kwargs)
     kernel.initialize(init_mixin_range, init_lengthscale_range)
     return kernel
+
+def create_additive_rp_kernel(d, J, learn_proj=False, kernel_type='RBF', space_proj=False, prescale=False, ard=True,
+                              init_lengthscale_range=(1., 1.)):
+    projs = [rp.gen_rp(d, 1) for _ in range(J)]
+    # bs = [torch.zeros(1) for _ in range(J)]
+    if space_proj:
+        newW, _ = rp.space_equally(torch.cat(projs,dim=1).t(), lr=0.1, niter=5000)
+        newW.requires_grad = False
+        projs = [newW[i:i+1, :].t() for i in range (J)]
+    proj_module = torch.nn.Linear(d, J, bias=False)
+    proj_module.weight.data = torch.cat(projs, dim=1).t()
+    # proj_module.bias.data = torch.cat(bs, dim=0)
+
+    if kernel_type == 'RBF':
+        kernel = gpytorch.kernels.RBFKernel()
+    elif kernel_type == 'Matern':
+        kernel = gpytorch.kernels.MaternKernel(nu=1.5)
+    else:
+        raise ValueError("Unknown kernel type")
+    kernel.initialize(lengthscale=torch.tensor([1.]))
+    kernel = ScaleKernel(kernel)
+    kernel.initialize(outputscale=torch.tensor([1/J]))
+    add_kernel = gpytorch.kernels.AdditiveStructureKernel(kernel, J)
+    if ard:
+        if prescale:
+            ard_num_dims = d
+
+        else:
+            ard_num_dims = J
+        initial_ls = _sample_from_range(ard_num_dims, init_lengthscale_range)
+    else:
+        ard_num_dims = None
+        initial_ls = _sample_from_range(1, init_lengthscale_range)
+
+    proj_kernel = ManualRescaleProjectionKernel(proj_module, add_kernel, prescale=prescale, ard_num_dims=ard_num_dims,
+                                                learn_proj=learn_proj)
+    proj_kernel.initialize(lengthscale=initial_ls)
+    return proj_kernel
 
 
 def create_general_rp_poly_kernel(d, degrees, learn_proj=False, weighted=False, kernel_type='RBF',
@@ -426,7 +465,7 @@ def create_exact_gp(trainX, trainY, kind, **kwargs):
         """
     [n, d] = trainX.shape
     if kind not in ['full', 'rp', 'strictly_additive', 'additive', 'pca', 'pca_rp', 'rp_poly', 'deep_rp_poly',
-                    'general_rp_poly', 'multi_full', 'duvenaud_additive']:
+                    'general_rp_poly', 'multi_full', 'duvenaud_additive', 'additive_rp']:
         raise ValueError("Unknown kernel structure type {}".format(kind))
 
     # regular Gaussian likelihood for regression problem
@@ -482,6 +521,8 @@ def create_exact_gp(trainX, trainY, kind, **kwargs):
         # if ski:
         #     raise NotImplementedError()
         kernel = create_general_rp_poly_kernel(d, X=trainX, **kwargs)
+    elif kind == 'additive_rp':
+        kernel = create_additive_rp_kernel(d, **kwargs)
     elif kind == 'pca_rp':
         # TODO: modify to work with PCA RP
         raise NotImplementedError("Apparently not working with PCA RP??")
@@ -514,7 +555,6 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
     for k, v in list(model_kwargs.items()):
         if isinstance(v, str) and v == 'd':
             model_kwargs[k] = d
-
 
     # Change some options just for initial training with random restarts.
     random_restarts = train_kwargs.pop('random_restarts', 1)
