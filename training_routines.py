@@ -1,18 +1,18 @@
 import math
 import rp
-from gp_models import ExactGPModel, train_to_convergence, ProjectionKernel, \
-    LinearRegressionModel, mean_squared_error, PolynomialProjectionKernel, DNN,\
+from gp_models import ExactGPModel, ProjectionKernel, \
+    LinearRegressionModel, PolynomialProjectionKernel, DNN,\
     GeneralizedPolynomialProjectionKernel, GeneralizedProjectionKernel, StrictlyAdditiveKernel, AdditiveKernel, DuvenaudAdditiveKernel
 import gpytorch
 from gpytorch.kernels import ScaleKernel, RBFKernel, GridInterpolationKernel
 from gpytorch.mlls import VariationalELBO, VariationalMarginalLogLikelihood
 from gp_models import SVGPRegressionModel
 import torch
-from sklearn.decomposition import PCA
 import warnings
 import copy
 import numpy as np
 from itertools import combinations
+from fitting.optimizing import train_to_convergence, mean_squared_error
 
 def _map_to_optim(optimizer):
     """Helper to map optimizer string names to torch objects"""

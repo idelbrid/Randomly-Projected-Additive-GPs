@@ -10,7 +10,7 @@ from scipy.io import loadmat
 import json
 import gpytorch
 
-from gp_models import mean_squared_error
+from fitting.optimizing import mean_squared_error
 import training_routines
 
 
