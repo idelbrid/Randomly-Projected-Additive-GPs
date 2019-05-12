@@ -120,10 +120,10 @@ def learn_projections(base_kernels, xs, ys, max_projections=10,
                 break
     print()
     joint_kernel = AdditiveKernel(*[model.covar_module for model in models])
-    joint_model = ExactGPModel(xs, ys, GaussianLikelihood(), joint_kernel)
+    joint_model = ExactGPModel(xs, ys, GaussianLikelihood(), joint_kernel).to(xs)
 
     if post_fit:
-        mll = ExactMarginalLogLikelihood(joint_model.likelihood,joint_model)
+        mll = ExactMarginalLogLikelihood(joint_model.likelihood,joint_model).to(xs)
         train_to_convergence(joint_model, xs, ys, objective=mll, **optim_kwargs)
 
     return joint_model
