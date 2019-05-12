@@ -96,7 +96,7 @@ def learn_projections(base_kernels, xs, ys, max_projections=10,
     models = []
     for i in range(max_projections):
         with torch.no_grad():
-            coef = torch.pinverse(xs).matmul(residuals)
+            coef = torch.pinverse(xs).matmul(residuals).reshape(1, -1)
 
         base_kernel = base_kernels[i]
         projection = torch.nn.Linear(d, 1, bias=False).to(xs)
