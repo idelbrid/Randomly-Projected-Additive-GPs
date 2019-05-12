@@ -59,6 +59,37 @@ def branin(x: torch.Tensor):
     return comp1 + comp2
 
 
+def _mvnpdf(z, mu, var):
+    d = z.shape[-1]
+    Z = (2 * pi * var)**(d/2)
+    return torch.exp(-(z - mu).pow(2).sum(dim=-1) / (2*var)) / Z
+
+
+def li_mixture_of_gaussians(x, dprime, v1, v2, v3):
+    var = 0.01 * dprime ** 0.1
+    return torch.log(0.1*_mvnpdf(x, v1, var) + 0.1*_mvnpdf(x, v2, var) + 0.8*_mvnpdf(x, v3, var))
+
+
+def li_rotated_mixture_of_gaussians(x, A, dprime=None, v1=None, v2=None, v3=None):
+    n, D = x.shape
+    if dprime is None:
+        dprime = D/2
+    M = int(D / dprime)
+    if v1 is None:
+        v1 = torch.ones(1, dprime) / 2
+    if v2 is None:
+        v2 = torch.ones(1, dprime) / 4
+    if v3 is None:
+        v3 = torch.ones(1, dprime) / 4 * 3
+    z = x.matmul(A.t())
+    toreturn = torch.zeros(n, dtype=torch.float)
+    for i in range(M):
+        start = i*dprime
+        end = (i+1)*dprime
+        toreturn = toreturn + li_mixture_of_gaussians(z[:, start:end], dprime, v1, v2, v3)
+    return toreturn
+
+
 def embed_function(f, f_dim, new_dim, A=None):
     if A is None:
         A = torch.randn(new_dim, f_dim)
