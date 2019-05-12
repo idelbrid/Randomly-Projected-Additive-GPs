@@ -340,6 +340,10 @@ if __name__ == '__main__':
     else:
         datasets = args.datasets
 
+    ppr = options['kind'] == 'ppr_gp'
+    if ppr:
+        options.pop('kind')
+
     df = pd.DataFrame()
     for dataset in datasets:
         print('Starting dataset {}'.format(dataset))
@@ -354,8 +358,7 @@ if __name__ == '__main__':
                     if args.ablation:
                         options['model_kwargs']['J'] = j
 
-                    if options['kind'] == 'ppr_gp':
-                        options.pop('kind')
+                    if ppr:
                         results = run_experiment(training_routines.train_ppr_gp, options, dataset, split=args.split,
                                                  cv=args.cv, repeats=args.repeats, normalize_using_train=True)
                     else:
