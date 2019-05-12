@@ -146,8 +146,7 @@ def get_mixins(kernel):
 def format_for_str(num_or_list, decimals=3):
     if isinstance(num_or_list, torch.Tensor):
         num_or_list = num_or_list.tolist()
-        if len(num_or_list) == 1:
-            num_or_list = num_or_list[0]
+        return format_for_str(num_or_list)
     if isinstance(num_or_list, list):
         return [format_for_str(n) for n in num_or_list]
     elif isinstance(num_or_list, float):
