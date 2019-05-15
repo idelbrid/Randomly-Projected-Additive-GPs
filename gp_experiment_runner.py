@@ -112,6 +112,7 @@ def run_experiment(training_routine: Callable,
                    repeats=1,
                    error_repeats=10,
                    normalize_using_train=True,
+                   chosen_fold=0
                    ):
     """Main function to run a model on a dataset.
 
@@ -151,8 +152,8 @@ def run_experiment(training_routine: Callable,
     results_list = []
     t0 = time.time()
     for fold in range(n_folds):
-        if not cv and fold > 0:  # only do one fold if you're not doing CV
-            break
+        if not cv and fold != chosen_fold:  # only do one fold if you're not doing CV
+            continue
         train, test = _access_fold(dataset, fold_starts, fold)
         if normalize_using_train:
             train, test = _normalize_by_train(train, test)
@@ -303,6 +304,7 @@ if __name__ == '__main__':
     parser.add_argument('--device', type=str, default='cpu', required=False, help='device string to use in PyTorch')
     parser.add_argument('--skip_posterior_variances', action='store_true')
     parser.add_argument('--ablation', action='store_true')
+    parser.add_argument('--fold', type=int, default=0, required=False)
 
     args = parser.parse_args()
 
@@ -360,11 +362,12 @@ if __name__ == '__main__':
 
                     if ppr:
                         results = run_experiment(training_routines.train_ppr_gp, options, dataset, split=args.split,
-                                                 cv=args.cv, repeats=args.repeats, normalize_using_train=True)
+                                                 cv=args.cv, repeats=args.repeats, normalize_using_train=True,
+                                                 chosen_fold=args.fold)
                     else:
                         results = run_experiment(training_routines.train_exact_gp, options,
                                        dataset, split=args.split, cv=args.cv, repeats=args.repeats,
-                                                 normalize_using_train=True)
+                                                 normalize_using_train=True, chosen_fold=args.fold)
                     if args.ablation:
                         results['J'] = j
                     results['dataset'] = dataset
