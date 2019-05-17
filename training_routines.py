@@ -3,7 +3,7 @@ import rp
 from gp_models import ExactGPModel, ProjectionKernel, \
     LinearRegressionModel, PolynomialProjectionKernel, DNN,\
     GeneralizedPolynomialProjectionKernel, GeneralizedProjectionKernel, StrictlyAdditiveKernel, AdditiveKernel, DuvenaudAdditiveKernel
-from gp_models.kernels import ManualRescaleProjectionKernel
+from gp_models.kernels import ManualRescaleProjectionKernel, InverseMQKernel
 import gpytorch
 from gpytorch.kernels import ScaleKernel, RBFKernel, GridInterpolationKernel, MaternKernel
 from gpytorch.mlls import VariationalELBO, VariationalMarginalLogLikelihood
@@ -335,7 +335,9 @@ def create_full_kernel(d, ard=False, ski=False, grid_size=None, kernel_type='RBF
     if kernel_type == 'RBF':
         kernel = gpytorch.kernels.RBFKernel(ard_num_dims=ard_num_dims)
     elif kernel_type == 'Matern':
-        kernel = gpytorch.kernels.MaternKernel(nu=1.5)
+        kernel = gpytorch.kernels.MaternKernel(nu=1.5, ard_num_dims=ard_num_dims)
+    elif kernel_type == 'InverseMQ':
+        kernel = InverseMQKernel(ard_num_dims=ard_num_dims)
     else:
         raise ValueError("Unknown kernel type")
 
@@ -344,7 +346,6 @@ def create_full_kernel(d, ard=False, ski=False, grid_size=None, kernel_type='RBF
     else:
         samples = 1
     kernel.initialize(lengthscale=_sample_from_range(samples, init_lengthscale_range))
-    # kernel.lengthscale = _sample_from_range(1, init_lengthscale_range)
 
     if ski:
         kernel = GridInterpolationKernel(kernel, num_dims=d,

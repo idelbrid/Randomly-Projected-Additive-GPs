@@ -305,6 +305,7 @@ if __name__ == '__main__':
     parser.add_argument('--skip_posterior_variances', action='store_true')
     parser.add_argument('--ablation', action='store_true')
     parser.add_argument('--fold', type=int, default=0, required=False)
+    parser.add_argument('--error_repeats', type=int, default=10, required=False)
 
     args = parser.parse_args()
 
@@ -363,11 +364,12 @@ if __name__ == '__main__':
                     if ppr:
                         results = run_experiment(training_routines.train_ppr_gp, options, dataset, split=args.split,
                                                  cv=args.cv, repeats=args.repeats, normalize_using_train=True,
-                                                 chosen_fold=args.fold)
+                                                 chosen_fold=args.fold, error_repeats=args.error_repeats)
                     else:
                         results = run_experiment(training_routines.train_exact_gp, options,
                                        dataset, split=args.split, cv=args.cv, repeats=args.repeats,
-                                                 normalize_using_train=True, chosen_fold=args.fold)
+                                                 normalize_using_train=True, chosen_fold=args.fold,
+                                                 error_repeats=args.error_repeats)
                     if args.ablation:
                         results['J'] = j
                     results['dataset'] = dataset
