@@ -667,10 +667,12 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
             train_outputs = model(trainX)
             test_outputs = model(testX)
             if not skip_posterior_variances:
-                model_metrics['train_nll'] = -likelihood(train_outputs).log_prob(
-                    trainY).item()
-                model_metrics['test_nll'] = -likelihood(test_outputs).log_prob(
-                    testY).item()
+                # model_metrics['train_nll'] = -likelihood(train_outputs).log_prob(
+                #     trainY).item()
+                # model_metrics['test_nll'] = -likelihood(test_outputs).log_prob(
+                #     testY).item()
+                model_metrics['train_nll'] = -mll(train_outputs, trainY).item()
+                model_metrics['test_nll'] = -mll(test_outputs, testY).item()
             model_metrics['train_mse'] = mean_squared_error(train_outputs.mean,
                                                             trainY)
 
