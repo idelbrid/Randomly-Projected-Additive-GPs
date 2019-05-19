@@ -86,7 +86,7 @@ def create_rp_poly_kernel(d, k, J, activation=None,
     if space_proj:
         # TODO: If k>1, could implement equal spacing for each set of projs
         # newW, _ = rp.space_equally(torch.cat(projs,dim=1).t(), lr=0.1, niter=5000)
-        newW = rp.compute_spherical_t_design(d-1, t=4, N=J)
+        newW = rp.compute_spherical_t_design(d-1, t=4, N=J).to(torch.float)
         newW.requires_grad = False
         projs = [newW[i:i+1, :].t() for i in range (J)]
 

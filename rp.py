@@ -184,7 +184,7 @@ def compute_spherical_t_design(d, t=5, N=None):
     phi = torch.from_numpy(res.x).view(N, d).contiguous().requires_grad_(False)
     X = _from_spherical(phi.tril())
     Q,R = torch.qr(torch.rand(d-1, d-1))
-    return X.matmul(Q)
+    return X.matmul(Q).to(torch.float)
 
 
 def space_equally(P, lr, niter):
