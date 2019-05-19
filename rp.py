@@ -183,7 +183,7 @@ def compute_spherical_t_design(d, t=5, N=None):
     res = minimize(wrapper, x0, jac=True, bounds=bounds, method='SLSQP', tol=1e-16, options=dict(maxiter=1000))
     phi = torch.from_numpy(res.x).view(N, d).contiguous().requires_grad_(False)
     X = _from_spherical(phi.tril())
-    Q,R = torch.qr(torch.rand(d-1, d-1))
+    Q,R = torch.qr(torch.rand(d-1, d-1, dtype=torch.double))
     return X.matmul(Q).to(torch.float)
 
 
