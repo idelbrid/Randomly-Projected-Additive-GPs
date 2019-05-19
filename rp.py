@@ -126,8 +126,12 @@ def _arrayify(X):
 
 
 def get_lower_bound_N(d, t):
-    pass
+    def _harmonics_dimension(d, l):
+        return (d*l + d - 1) * np.exp(loggamma(l + d - 1) - loggamma(d) - loggamma(l + 1))
+
+    return int(np.ceil(1/d * (_harmonics_dimension(d, t) + d*(d+1)/2 - 1)))
     # TODO!!
+
 
 def _from_spherical(phi):
     n, d = phi.shape
@@ -136,6 +140,7 @@ def _from_spherical(phi):
     coss = torch.cat([torch.cos(phi), torch.ones(n, 1).to(phi)], dim=1)
     return sin_cumprod * coss
 
+
 def _initialize(N, d):
     phi = np.empty([N, d])
     phi[:, :d-1] = np.random.rand(N, d-1)*pi
@@ -143,7 +148,7 @@ def _initialize(N, d):
     return phi
 
 
-def compute_spherical_t_design(d, t=5, N=None, **kwargs):
+def compute_spherical_t_design(d, t=5, N=None):
     if N is None:
         N = get_lower_bound_N(d, t) 
 
@@ -166,7 +171,7 @@ def compute_spherical_t_design(d, t=5, N=None, **kwargs):
 
     def wrapper(phi):
         phi = torch.from_numpy(phi).view(N, d).contiguous().requires_grad_(True)
-        X = from_spherical(phi.tril(-1))
+        X = _from_spherical(phi.tril(-1))
         X = torch.cat([X, -X])
         loss = V(X)
         loss.backward(retain_graph=True)
@@ -174,10 +179,10 @@ def compute_spherical_t_design(d, t=5, N=None, **kwargs):
         fval = loss.item()
         return fval, gradf
 
-    x0 = initialize(N, d).flatten()
+    x0 = _initialize(N, d).flatten()
     res = minimize(wrapper, x0, jac=True, bounds=bounds, method='SLSQP', tol=1e-16, options=dict(maxiter=1000))
     phi = torch.from_numpy(res.x).view(N, d).contiguous().requires_grad_(False)
-    X = from_spherical(phi.tril())
+    X = _from_spherical(phi.tril())
     Q,R = torch.qr(torch.rand(d-1, d-1))
     return X.matmul(Q)
 
