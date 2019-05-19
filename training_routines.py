@@ -85,7 +85,8 @@ def create_rp_poly_kernel(d, k, J, activation=None,
 
     if space_proj:
         # TODO: If k>1, could implement equal spacing for each set of projs
-        newW, _ = rp.space_equally(torch.cat(projs,dim=1).t(), lr=0.1, niter=5000)
+        # newW, _ = rp.space_equally(torch.cat(projs,dim=1).t(), lr=0.1, niter=5000)
+        newW = rp.compute_spherical_t_design(d-1, t=4, N=J)
         newW.requires_grad = False
         projs = [newW[i:i+1, :].t() for i in range (J)]
 
@@ -108,7 +109,8 @@ def create_additive_rp_kernel(d, J, learn_proj=False, kernel_type='RBF', space_p
     projs = [rp.gen_rp(d, 1) for _ in range(J)]
     # bs = [torch.zeros(1) for _ in range(J)]
     if space_proj:
-        newW, _ = rp.space_equally(torch.cat(projs,dim=1).t(), lr=0.1, niter=5000)
+        # newW, _ = rp.space_equally(torch.cat(projs,dim=1).t(), lr=0.1, niter=5000)
+        newW = rp.compute_spherical_t_design(d-1, N=J)
         newW.requires_grad = False
         projs = [newW[i:i+1, :].t() for i in range (J)]
     proj_module = torch.nn.Linear(d, J, bias=False)
