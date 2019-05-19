@@ -2,6 +2,10 @@ import numpy as np
 import torch
 from math import sqrt
 from torch.distributions import Categorical
+from scipy.optimize import minimize
+from scipy.special import loggamma
+from math import sqrt, pi
+
 
 def gen_rp(d, k, dist='gaussian'):
     """Generate a random projection matrix (input dim d output dim k)"""
@@ -115,6 +119,67 @@ def ELM(X, K, dist='gaussian', activation='sigmoid'):
         raise ValueError("Invalid activation")
 
     return fn(A, b, X), A, b
+
+
+def _arrayify(X):
+    return X.cpu().detach().contiguous().double().clone().numpy()
+
+
+def get_lower_bound_N(d, t):
+    pass
+    # TODO!!
+
+def _from_spherical(phi):
+    n, d = phi.shape
+    sins = torch.cat([torch.ones(n, 1).to(phi), torch.sin(phi)], dim=1)
+    sin_cumprod = torch.cumprod(sins, dim=1)
+    coss = torch.cat([torch.cos(phi), torch.ones(n, 1).to(phi)], dim=1)
+    return sin_cumprod * coss
+
+def _initialize(N, d):
+    phi = np.empty([N, d])
+    phi[:, :d-1] = np.random.rand(N, d-1)*pi
+    phi[:, d-1] = np.random.rand(N)*2*pi
+    return phi
+
+
+def compute_spherical_t_design(d, t=5, N=None, **kwargs):
+    if N is None:
+        N = get_lower_bound_N(d, t) 
+
+    alpha = (d-2)/d
+    loga = loggamma(alpha + 3/2) - 1/2 * np.log(pi)
+    if t % 2 == 0:
+        loga += loggamma((t+1)/2) - loggamma(alpha + 3/2 + t/2)
+    else:
+        loga += loggamma(t/2) - loggamma(alpha + 1 + t/2)
+    a0 = np.exp(loga)
+
+    def V(X):  # Variational form
+        inners = X.matmul(X.t())
+        poly = inners.pow(t-1) + inners.pow(t) - torch.full_like(inners, a0)
+        return poly.sum()
+
+    bounds = []
+    for i in range(N):
+        bounds.extend([[0, pi] for _ in range(d-1)] + [[0, 2* pi]])
+
+    def wrapper(phi):
+        phi = torch.from_numpy(phi).view(N, d).contiguous().requires_grad_(True)
+        X = from_spherical(phi.tril(-1))
+        X = torch.cat([X, -X])
+        loss = V(X)
+        loss.backward(retain_graph=True)
+        gradf = _arrayify(phi.grad.view(-1))
+        fval = loss.item()
+        return fval, gradf
+
+    x0 = initialize(N, d).flatten()
+    res = minimize(wrapper, x0, jac=True, bounds=bounds, method='SLSQP', tol=1e-16, options=dict(maxiter=1000))
+    phi = torch.from_numpy(res.x).view(N, d).contiguous().requires_grad_(False)
+    X = from_spherical(phi.tril())
+    Q,R = torch.qr(torch.rand(d-1, d-1))
+    return X.matmul(Q)
 
 
 def space_equally(P, lr, niter):
