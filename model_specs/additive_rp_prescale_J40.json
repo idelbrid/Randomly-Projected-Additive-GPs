@@ -5,7 +5,7 @@
     "noise_prior": true,
     "kernel_type": "RBF",
     "learn_proj": false,
-    "prescale": false
+    "prescale": true
   },
   "train_kwargs": {
     "verbose": false,
