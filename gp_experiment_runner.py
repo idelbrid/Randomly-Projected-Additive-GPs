@@ -306,6 +306,7 @@ if __name__ == '__main__':
     parser.add_argument('--ablation', action='store_true')
     parser.add_argument('--fold', type=int, default=0, required=False)
     parser.add_argument('--error_repeats', type=int, default=10, required=False)
+    parser.add_argument('--max_cg_iterations', type=int, default=10_000, required=False)
 
     args = parser.parse_args()
 
@@ -350,8 +351,8 @@ if __name__ == '__main__':
     df = pd.DataFrame()
     for dataset in datasets:
         print('Starting dataset {}'.format(dataset))
-        with gpytorch.settings.cg_tolerance(args.cg_tol),gpytorch.settings.fast_computations(not args.use_chol),gpytorch.settings.fast_pred_var(args.fast_pred):
-            with gpytorch.settings.use_toeplitz(args.use_toeplitz):
+        with gpytorch.settings.cg_tolerance(args.cg_tol),gpytorch.settings.fast_computations(not args.use_chol, not args.use_chol, not args.use_chol),gpytorch.settings.fast_pred_var(args.fast_pred):
+            with gpytorch.settings.use_toeplitz(args.use_toeplitz), gpytorch.settings.max_cg_iterations(args.max_cg_iterations):
                 if args.ablation:
                     jlist = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233]
                 else:

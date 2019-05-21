@@ -1,7 +1,11 @@
 {
-  "kind": "ppr_gp",
+  "kind": "additive_rp",
   "model_kwargs": {
-    "kernel_type": "RBF"
+    "J": 40,
+    "noise_prior": true,
+    "kernel_type": "RBF",
+    "learn_proj": false,
+    "prescale": false
   },
   "train_kwargs": {
     "verbose": false,
@@ -9,9 +13,6 @@
     "max_iter": 1000,
     "lr": 0.1,
     "patience": 20,
-    "smooth": true,
-    "post_fit": true,
-    "max_projections": 10,
-    "mse_threshold": 0
+    "smooth": true
   }
 }
