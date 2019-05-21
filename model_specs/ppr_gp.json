@@ -10,7 +10,7 @@
     "lr": 0.1,
     "patience": 20,
     "smooth": true,
-    "post_fit": false,
+    "post_fit": true,
     "max_projections": 10,
     "mse_threshold": 0
   }
