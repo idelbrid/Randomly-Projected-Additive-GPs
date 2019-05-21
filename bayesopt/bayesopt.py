@@ -4,7 +4,9 @@ from typing import Callable, Iterable, Any
 from .optimize import quasirandom_candidates, random_candidates, brute_candidates
 import numpy as np
 from botorch.models.model import Model
+from botorch.models.gp_regression import FixedNoiseGP
 from botorch.acquisition.acquisition import AcquisitionFunction
+from botorch.acquisition import ExpectedImprovement, UpperConfidenceBound
 from botorch import fit_gpytorch_model
 from botorch.optim.fit import fit_gpytorch_torch
 from botorch.optim import joint_optimize
@@ -163,6 +165,8 @@ class BayesOpt(object):
         elif manually_set or need_to_refit:
             # manually set the training data of an existing model
             self.model.set_train_data(self.obsX, self.obsY, strict=False)
+            if isinstance(self.model, FixedNoiseGP):
+                self.model.likelihood.noise[0].expand_as(self.obsY)
         else:
             # just get the fantasy model
             newX = self.obsX[-1:-2, :]
@@ -183,7 +187,10 @@ class BayesOpt(object):
         return self.model
 
     def _maximize_acq(self, num_restarts=10, raw_samples=500):
-        acq_func = self.acq_fxn(self.model, self._best_internal_y)
+        if self.acq_fxn == ExpectedImprovement:
+            acq_func = self.acq_fxn(self.model, self._best_internal_y)
+        else:
+            acq_func = self.acq_fxn(self.model)
         candidates = joint_optimize(
             acq_function=acq_func,
             bounds=self._internal_bounds,  # I think this should actually just be like [0,1]
