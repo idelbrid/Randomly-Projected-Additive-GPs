@@ -354,7 +354,8 @@ if __name__ == '__main__':
         with gpytorch.settings.cg_tolerance(args.cg_tol),gpytorch.settings.fast_computations(not args.use_chol, not args.use_chol, not args.use_chol),gpytorch.settings.fast_pred_var(args.fast_pred):
             with gpytorch.settings.use_toeplitz(args.use_toeplitz), gpytorch.settings.max_cg_iterations(args.max_cg_iterations):
                 if args.ablation:
-                    jlist = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233]
+                    jlist = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89]
+                    # jlist = [1, 2, 3, 5, 8, 13]   #temporary 
                 else:
                     jlist = [1]
 
