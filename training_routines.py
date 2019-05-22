@@ -105,12 +105,12 @@ def create_rp_poly_kernel(d, k, J, activation=None,
     return kernel
 
 def create_additive_rp_kernel(d, J, learn_proj=False, kernel_type='RBF', space_proj=False, prescale=False, ard=True,
-                              init_lengthscale_range=(1., 1.)):
+                              init_lengthscale_range=(1., 1.), ski=False, ski_options=None):
     projs = [rp.gen_rp(d, 1) for _ in range(J)]
     # bs = [torch.zeros(1) for _ in range(J)]
     if space_proj:
-        # newW, _ = rp.space_equally(torch.cat(projs,dim=1).t(), lr=0.1, niter=5000)
-        newW = rp.compute_spherical_t_design(d-1, N=J)
+        newW, _ = rp.space_equally(torch.cat(projs,dim=1).t(), lr=0.1, niter=5000)
+        # newW = rp.compute_spherical_t_design(d-1, N=J)
         newW.requires_grad = False
         projs = [newW[i:i+1, :].t() for i in range (J)]
     proj_module = torch.nn.Linear(d, J, bias=False)
@@ -126,6 +126,8 @@ def create_additive_rp_kernel(d, J, learn_proj=False, kernel_type='RBF', space_p
     kernel.initialize(lengthscale=torch.tensor([1.]))
     kernel = ScaleKernel(kernel)
     kernel.initialize(outputscale=torch.tensor([1/J]))
+    if ski:
+        kernel = gpytorch.kernels.GridInterpolationKernel(kernel, **ski_options)
     add_kernel = gpytorch.kernels.AdditiveStructureKernel(kernel, J)
     if ard:
         if prescale:
@@ -597,7 +599,7 @@ def train_ppr_gp(trainX, trainY, testX, testY, model_kwargs, train_kwargs, devic
 # TODO: raise a warning if somewhat important options are missing.
 # TODO: change the key word arguments to model options and rename train_kwargs to train options. This applies to basically all of the functions here.
 def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwargs, device='cpu',
-                   skip_posterior_variances=False):
+                   skip_posterior_variances=False, skip_random_restart=False, evaluate_on_train=True):
     """Create and train an exact GP with the given options"""
     model_kwargs = copy.copy(model_kwargs)
     train_kwargs = copy.copy(train_kwargs)
@@ -621,32 +623,37 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
     initial_train_kwargs = copy.copy(train_kwargs)
     initial_train_kwargs['max_iter'] = init_iters
     initial_train_kwargs['check_conv'] = False
-    initial_train_kwargs['verbose'] = 0  # don't shout about it
+    # initial_train_kwargs['verbose'] = 0  # don't shout about it
     best_model, best_likelihood, best_mll = None, None, None
     best_loss = np.inf
 
     # TODO: move random restarts code to a train_to_convergence-like function
-    # Do some number of random restarts, keeping the best one after a truncated training.
-    for restart in range(random_restarts):
-        # TODO: log somehow what's happening in the restarts.
+    if not skip_random_restart:
+        # Do some number of random restarts, keeping the best one after a truncated training.
+        for restart in range(random_restarts):
+            # TODO: log somehow what's happening in the restarts.
+            model, likelihood = create_exact_gp(trainX, trainY, kind, **model_kwargs)
+            model = model.to(device)
+
+            # regular marginal log likelihood
+            mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
+            _ = train_to_convergence(model, trainX, trainY, optimizer=optimizer_,
+                                     objective=mll, isloss=False, **initial_train_kwargs)
+            model.train()
+            output = model(trainX)
+            loss = -mll(output, trainY).item()
+            if loss < best_loss:
+                best_loss = loss
+                best_model = model
+                best_likelihood = likelihood
+                best_mll = mll
+        model = best_model
+        likelihood = best_likelihood
+        mll = best_mll
+    else:
         model, likelihood = create_exact_gp(trainX, trainY, kind, **model_kwargs)
         model = model.to(device)
-
-        # regular marginal log likelihood
         mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
-        _ = train_to_convergence(model, trainX, trainY, optimizer=optimizer_,
-                                 objective=mll, isloss=False, **initial_train_kwargs)
-        model.train()
-        output = model(trainX)
-        loss = -mll(output, trainY).item()
-        if loss < best_loss:
-            best_loss = loss
-            best_model = model
-            best_likelihood = likelihood
-            best_mll = mll
-    model = best_model
-    likelihood = best_likelihood
-    mll = best_mll
 
     # fit GP
     trained_epochs = train_to_convergence(model, trainX, trainY, optimizer=optimizer_,
@@ -666,17 +673,19 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
         with gpytorch.settings.skip_posterior_variances(skip_posterior_variances):
             model.eval()  # Now consider posterior distributions
             likelihood.eval()
-            train_outputs = model(trainX)
+            if evaluate_on_train:
+                train_outputs = model(trainX)
+                model_metrics['train_mse'] = mean_squared_error(train_outputs.mean, trainY)
+
             test_outputs = model(testX)
             if not skip_posterior_variances:
                 # model_metrics['train_nll'] = -likelihood(train_outputs).log_prob(
                 #     trainY).item()
                 # model_metrics['test_nll'] = -likelihood(test_outputs).log_prob(
                 #     testY).item()
-                model_metrics['train_nll'] = -mll(train_outputs, trainY).item()
+                if evaluate_on_train:
+                    model_metrics['train_nll'] = -mll(train_outputs, trainY).item()
                 model_metrics['test_nll'] = -mll(test_outputs, testY).item()
-            model_metrics['train_mse'] = mean_squared_error(train_outputs.mean,
-                                                            trainY)
 
     model_metrics['state_dict_file'] = _save_state_dict(model)
     return model_metrics, test_outputs.mean.to('cpu'), model

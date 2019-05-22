@@ -307,6 +307,7 @@ if __name__ == '__main__':
     parser.add_argument('--fold', type=int, default=0, required=False)
     parser.add_argument('--error_repeats', type=int, default=10, required=False)
     parser.add_argument('--max_cg_iterations', type=int, default=10_000, required=False)
+    parser.add_argument('--skip_evaluate_on_train', action='store_true')
 
     args = parser.parse_args()
 
@@ -320,6 +321,7 @@ if __name__ == '__main__':
     print('Using device {}'.format(args.device))
     options['device'] = args.device
     options['skip_posterior_variances'] = args.skip_posterior_variances
+    options['evaluate_on_train'] = not args.skip_evaluate_on_train
 
     try:
         args.datasets[0] = int(args.datasets[0])
@@ -375,5 +377,10 @@ if __name__ == '__main__':
                         results['J'] = j
                     results['dataset'] = dataset
                     results['options'] = json.dumps(options)
+                    results['cg_tol'] = args.cg_tol
+                    results['use_chol'] = args.use_chol
+                    results['max_cg_iterations'] = args.max_cg_iterations
+                    results['use_toeplitz'] = args.use_toeplitz
+                    results['fast_pred_var'] = args.fast_pred
                     df = pd.concat([df, results])
                     df.to_csv(args.output)
