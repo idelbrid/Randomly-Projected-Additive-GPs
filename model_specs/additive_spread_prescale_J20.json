@@ -1,23 +1,17 @@
 {
-  "kind": "rp_poly",
+  "kind": "additive_rp",
   "model_kwargs": {
-    "k": 1,
     "J": 20,
     "noise_prior": true,
     "kernel_type": "RBF",
     "learn_proj": false,
-    "weighted": true,
-    "space_proj": true,
-    "ski": true,
-    "ski_options": {
-      "grid_size": 512,
-      "num_dims": 1
-    }
+    "prescale": true,
+    "space_proj": true
   },
   "train_kwargs": {
-    "verbose": true,
+    "verbose": false,
     "optimizer": "adam",
-    "max_iter": 100,
+    "max_iter": 1000,
     "lr": 0.1,
     "patience": 20,
     "smooth": true
