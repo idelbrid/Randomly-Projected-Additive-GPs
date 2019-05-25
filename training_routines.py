@@ -96,6 +96,8 @@ def create_rp_poly_kernel(d, k, J, activation=None,
     elif kernel_type == 'Matern':
         kernel = gpytorch.kernels.MaternKernel
         kwargs = dict(nu=1.5)
+    elif kernel_type == 'Cosine':
+        kernel = gpytorch.kernels.CosineKernel
     else:
         raise ValueError("Unknown kernel type")
 
@@ -121,9 +123,14 @@ def create_additive_rp_kernel(d, J, learn_proj=False, kernel_type='RBF', space_p
         kernel = gpytorch.kernels.RBFKernel()
     elif kernel_type == 'Matern':
         kernel = gpytorch.kernels.MaternKernel(nu=1.5)
+    elif kernel_type == 'Cosine':
+        kernel = gpytorch.kernels.CosineKernel()
     else:
         raise ValueError("Unknown kernel type")
-    kernel.initialize(lengthscale=torch.tensor([1.]))
+    if hasattr(kernel, 'period_length'):
+        kernel.initialize(period_length=torch.tensor([1.]))
+    else:
+        kernel.initialize(lengthscale=torch.tensor([1.]))
     kernel = ScaleKernel(kernel)
     kernel.initialize(outputscale=torch.tensor([1/J]))
     if ski:
