@@ -78,9 +78,9 @@ def create_deep_rp_poly_kernel(d, degrees, projection_architecture, projection_k
 def create_rp_poly_kernel(d, k, J, activation=None,
                           learn_proj=False, weighted=False, kernel_type='RBF',
                           space_proj=False, init_mixin_range=(1.0, 1.0), init_lengthscale_range=(1.0, 1.0),
-                          ski=False, ski_options=None, X=None,
+                          ski=False, ski_options=None, X=None, proj_dist='gaussian',
                           ):
-    projs = [rp.gen_rp(d, k) for _ in range(J)]
+    projs = [rp.gen_rp(d, k, dist=proj_dist) for _ in range(J)]
     bs = [torch.zeros(k) for _ in range(J)]
 
     if space_proj:
@@ -105,8 +105,8 @@ def create_rp_poly_kernel(d, k, J, activation=None,
     return kernel
 
 def create_additive_rp_kernel(d, J, learn_proj=False, kernel_type='RBF', space_proj=False, prescale=False, ard=True,
-                              init_lengthscale_range=(1., 1.), ski=False, ski_options=None):
-    projs = [rp.gen_rp(d, 1) for _ in range(J)]
+                              init_lengthscale_range=(1., 1.), ski=False, ski_options=None, proj_dist='gaussian'):
+    projs = [rp.gen_rp(d, 1, dist=proj_dist) for _ in range(J)]
     # bs = [torch.zeros(1) for _ in range(J)]
     if space_proj:
         newW, _ = rp.space_equally(torch.cat(projs,dim=1).t(), lr=0.1, niter=5000)
