@@ -9,6 +9,7 @@ import os
 from scipy.io import loadmat
 import json
 import gpytorch
+from config import data_base_path
 
 from fitting.optimizing import mean_squared_error
 import training_routines
@@ -20,7 +21,7 @@ def old_load_dataset(name: str):
 
 
 def load_dataset(name: str):
-    mat = loadmat(os.path.join('.', 'uci', name, '{}.mat'.format(name)))
+    mat = loadmat(os.path.join(data_base_path, 'uci', name, '{}.mat'.format(name)))
     [n, d] = mat['data'].shape
     df = pd.DataFrame(mat['data'],
                       columns=list(range(d-1))+['target'])
@@ -319,6 +320,9 @@ if __name__ == '__main__':
     print('Loaded options', options)
 
     print('Using device {}'.format(args.device))
+
+    print('Registered data base path {}'.format(data_base_path))
+
     options['device'] = args.device
     options['skip_posterior_variances'] = args.skip_posterior_variances
     options['evaluate_on_train'] = not args.skip_evaluate_on_train

@@ -11,6 +11,8 @@ from gp_models import SVGPRegressionModel
 import torch
 import warnings
 import copy
+import os
+from config import data_base_path, model_base_path
 import numpy as np
 from itertools import combinations
 from fitting.optimizing import train_to_convergence, mean_squared_error, learn_projections
@@ -34,7 +36,7 @@ def _save_state_dict(model):
     s = str(d)
     h = hash(s)
     fname = 'model_state_dict_{}.pkl'.format(h)
-    torch.save(d, 'models/' + fname)
+    torch.save(d, os.path.join(model_base_path, 'models', fname))
     return fname
 
 
