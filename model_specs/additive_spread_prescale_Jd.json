@@ -1,7 +1,7 @@
 {
   "kind": "additive_rp",
   "model_kwargs": {
-    "J": 20,
+    "J": "d",
     "noise_prior": true,
     "kernel_type": "RBF",
     "learn_proj": false,
