@@ -90,6 +90,8 @@ def _access_fold(dataset, fold_starts, fold):
 
 def _normalize_by_train(train, test):
     """Mean and std normalize using mean and std of the train set."""
+    train = train.copy()
+    test = test.copy()
     cols = list(train.columns)
     features = [x for x in cols if (x != 'target' and x.lower() != 'index')]
     mu = train[features + ['target']].mean()
@@ -113,7 +115,8 @@ def run_experiment(training_routine: Callable,
                    repeats=1,
                    error_repeats=10,
                    normalize_using_train=True,
-                   chosen_fold=0
+                   chosen_fold=0,
+                   print_to_console=True
                    ):
     """Main function to run a model on a dataset.
 
@@ -182,6 +185,7 @@ def run_experiment(training_routine: Callable,
                     end = time.perf_counter()
 
                     result_dict['mse'] = mean_squared_error(ypred, testY)
+                    result_dict['rmse'] = np.sqrt(result_dict['mse'])
                     result_dict['train_time'] = end - start
 
                     # e.g. -ll, -mll
@@ -198,7 +202,8 @@ def run_experiment(training_routine: Callable,
                     num_finished = fold*repeats+repeat+1
                     num_remaining = n_folds*repeats - num_finished
                     eta = datetime.timedelta(seconds=elapsed/num_finished*num_remaining)
-                    print('{}, fold={}, rep={}, eta={} \n{}'.format(datetime.datetime.now(), fold, repeat, format_timedelta(eta), result_dict))
+                    if print_to_console:
+                        print('{}, fold={}, rep={}, eta={} \n{}'.format(datetime.datetime.now(), fold, repeat, format_timedelta(eta), result_dict))
 
                     # print("succeed: ", succeed)
             except Exception:
@@ -217,74 +222,74 @@ def run_experiment(training_routine: Callable,
     return results
 
 
-def run_experiment_suite(datasets,
-                         training_routine: Callable,
-                         training_options: Dict,
-                         split: float,
-                         cv: bool,
-                         addl_metrics: Dict={},
-                         inner_repeats=1,
-                         outer_repeats=1,
-                                            ):
-    df = pd.DataFrame()
-    if datasets == 'small':
-        datasets = get_small_datasets()
-    elif datasets == 'medium':
-        datasets = get_medium_datasets()
-    elif datasets == 'big':
-        datasets = get_big_datasets()
-    elif datasets == 'smalltomedium':
-        datasets = get_small_datasets() + get_medium_datasets()
-    elif datasets == 'all':
-        datasets = get_datasets()
-    else:
-        raise ValueError("Unknown set of datasets")
+# def run_experiment_suite(datasets,
+#                          training_routine: Callable,
+#                          training_options: Dict,
+#                          split: float,
+#                          cv: bool,
+#                          addl_metrics: Dict={},
+#                          inner_repeats=1,
+#                          outer_repeats=1,
+#                                             ):
+#     df = pd.DataFrame()
+#     if datasets == 'small':
+#         datasets = get_small_datasets()
+#     elif datasets == 'medium':
+#         datasets = get_medium_datasets()
+#     elif datasets == 'big':
+#         datasets = get_big_datasets()
+#     elif datasets == 'smalltomedium':
+#         datasets = get_small_datasets() + get_medium_datasets()
+#     elif datasets == 'all':
+#         datasets = get_datasets()
+#     else:
+#         raise ValueError("Unknown set of datasets")
+#
+#     for i in range(outer_repeats):
+#         for dataset in datasets:
+#             print(dataset, 'starting...')
+#             result = run_experiment(training_routine, training_options, dataset=dataset,
+#                            split=split, cv=cv, addl_metrics=addl_metrics,
+#                            repeats=inner_repeats)
+#             result['dataset'] = dataset
+#             df = pd.concat([df, result])
+#             df.to_csv('./_partial_result.csv')
+#
+#     return df
 
-    for i in range(outer_repeats):
-        for dataset in datasets:
-            print(dataset, 'starting...')
-            result = run_experiment(training_routine, training_options, dataset=dataset,
-                           split=split, cv=cv, addl_metrics=addl_metrics,
-                           repeats=inner_repeats)
-            result['dataset'] = dataset
-            df = pd.concat([df, result])
-            df.to_csv('./_partial_result.csv')
 
-    return df
-
-
-def rp_compare_ablation(filename, datasets, rp_options, repeats=1, max_j=300):
-    if os.path.exists(filename):
-        df = pd.read_csv(filename)
-    else:
-        df = pd.DataFrame({'dataset': [], 'J': []})
-
-    for dataset in datasets:
-        print(dataset, 'starting')
-        J_2 = 0
-        J_1 = 1
-        J = J_1 + J_2
-        while J_1 + J_2 < max_j:
-            J = J_1 + J_2
-            J_2 = J_1
-            J_1 = J
-            print("J=", J)
-            if not df[(df['J'] == J) & (df['dataset'] == dataset)].empty:
-                print("already done, skipping...")
-                continue
-            rp_options['model_kwargs']['J'] = J
-            options_json = json.dumps(rp_options)
-            with gpytorch.settings.cg_tolerance(0.01):
-                result = run_experiment(training_routines.train_exact_gp, rp_options,
-                        dataset=dataset, split=0.1, cv=True,
-                        repeats=repeats, normalize_using_train=True)
-            result['RP'] = True
-            result['k'] = rp_options['model_kwargs']['k']
-            result['J'] = rp_options['model_kwargs']['J']
-            result['dataset'] = dataset
-            result['options'] = options_json            
-            df = pd.concat([df, result])
-            df.to_csv(filename)
+# def rp_compare_ablation(filename, datasets, rp_options, repeats=1, max_j=300):
+#     if os.path.exists(filename):
+#         df = pd.read_csv(filename)
+#     else:
+#         df = pd.DataFrame({'dataset': [], 'J': []})
+#
+#     for dataset in datasets:
+#         print(dataset, 'starting')
+#         J_2 = 0
+#         J_1 = 1
+#         J = J_1 + J_2
+#         while J_1 + J_2 < max_j:
+#             J = J_1 + J_2
+#             J_2 = J_1
+#             J_1 = J
+#             print("J=", J)
+#             if not df[(df['J'] == J) & (df['dataset'] == dataset)].empty:
+#                 print("already done, skipping...")
+#                 continue
+#             rp_options['model_kwargs']['J'] = J
+#             options_json = json.dumps(rp_options)
+#             with gpytorch.settings.cg_tolerance(0.01):
+#                 result = run_experiment(training_routines.train_exact_gp, rp_options,
+#                         dataset=dataset, split=0.1, cv=True,
+#                         repeats=repeats, normalize_using_train=True)
+#             result['RP'] = True
+#             result['k'] = rp_options['model_kwargs']['k']
+#             result['J'] = rp_options['model_kwargs']['J']
+#             result['dataset'] = dataset
+#             result['options'] = options_json
+#             df = pd.concat([df, result])
+#             df.to_csv(filename)
 
 
 if __name__ == '__main__':
