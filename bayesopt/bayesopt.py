@@ -10,7 +10,7 @@ from botorch.acquisition import ExpectedImprovement, UpperConfidenceBound
 from botorch import fit_gpytorch_model
 from botorch.optim.fit import fit_gpytorch_torch
 from botorch.optim import joint_optimize
-from .utils import get_lengthscales, get_mixins, format_for_str, get_outputscale
+from utils import get_lengthscales, get_mixins, get_outputscale, format_for_str
 from fitting.optimizing import train_to_convergence
 # TODO: implement Add-EI
 # TODO: implement similar for random projections.
