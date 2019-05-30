@@ -315,6 +315,8 @@ if __name__ == '__main__':
     parser.add_argument('--error_repeats', type=int, default=10, required=False)
     parser.add_argument('--max_cg_iterations', type=int, default=10_000, required=False)
     parser.add_argument('--skip_evaluate_on_train', action='store_true')
+    parser.add_argument('--checkpoint_kernel', type=float, default=0, required=False, help='Split kernel into chunks')
+
 
     args = parser.parse_args()
 
@@ -332,6 +334,7 @@ if __name__ == '__main__':
     options['device'] = args.device
     options['skip_posterior_variances'] = args.skip_posterior_variances
     options['evaluate_on_train'] = not args.skip_evaluate_on_train
+
 
     try:
         args.datasets[0] = int(args.datasets[0])
@@ -363,36 +366,42 @@ if __name__ == '__main__':
     df = pd.DataFrame()
     for dataset in datasets:
         print('Starting dataset {}'.format(dataset))
-        with gpytorch.settings.cg_tolerance(args.cg_tol),gpytorch.settings.eval_cg_tolerance(args.eval_cg_tol), gpytorch.settings.fast_computations(not args.use_chol, not args.use_chol, not args.use_chol),gpytorch.settings.fast_pred_var(args.fast_pred):
-            with gpytorch.settings.use_toeplitz(args.use_toeplitz), gpytorch.settings.max_cg_iterations(args.max_cg_iterations):
+        with gpytorch.settings.cg_tolerance(args.cg_tol), \
+              gpytorch.settings.eval_cg_tolerance(args.eval_cg_tol), \
+              gpytorch.settings.fast_computations(not args.use_chol, not args.use_chol, not args.use_chol), \
+              gpytorch.settings.fast_pred_var(args.fast_pred), \
+              gpytorch.settings.use_toeplitz(args.use_toeplitz), \
+              gpytorch.settings.max_cg_iterations(args.max_cg_iterations), \
+              gpytorch.beta_features.checkpoint_kernel(args.checkpoint_kernel):
+            if args.ablation:
+                jlist = [1, 2, 3, 5, 8, 13, 21, 34]
+                # jlist = [21]   #temporary
+            else:
+                jlist = [1]
+
+            for j in jlist:
                 if args.ablation:
-                    jlist = [1, 2, 3, 5, 8, 13, 21, 34]
-                    # jlist = [21]   #temporary
+                    options['model_kwargs']['J'] = j
+
+                if ppr:
+                    results = run_experiment(training_routines.train_ppr_gp, options, dataset, split=args.split,
+                                             cv=args.cv, repeats=args.repeats, normalize_using_train=True,
+                                             chosen_fold=args.fold, error_repeats=args.error_repeats)
                 else:
-                    jlist = [1]
-
-                for j in jlist:
-                    if args.ablation:
-                        options['model_kwargs']['J'] = j
-
-                    if ppr:
-                        results = run_experiment(training_routines.train_ppr_gp, options, dataset, split=args.split,
-                                                 cv=args.cv, repeats=args.repeats, normalize_using_train=True,
-                                                 chosen_fold=args.fold, error_repeats=args.error_repeats)
-                    else:
-                        results = run_experiment(training_routines.train_exact_gp, options,
-                                       dataset, split=args.split, cv=args.cv, repeats=args.repeats,
-                                                 normalize_using_train=True, chosen_fold=args.fold,
-                                                 error_repeats=args.error_repeats)
-                    if args.ablation:
-                        results['J'] = j
-                    results['dataset'] = dataset
-                    results['options'] = json.dumps(options)
-                    results['cg_tol'] = args.cg_tol
-                    results['eval_cg_tol']= args.eval_cg_tol
-                    results['use_chol'] = args.use_chol
-                    results['max_cg_iterations'] = args.max_cg_iterations
-                    results['use_toeplitz'] = args.use_toeplitz
-                    results['fast_pred_var'] = args.fast_pred
-                    df = pd.concat([df, results])
-                    df.to_csv(args.output)
+                    results = run_experiment(training_routines.train_exact_gp, options,
+                                   dataset, split=args.split, cv=args.cv, repeats=args.repeats,
+                                             normalize_using_train=True, chosen_fold=args.fold,
+                                             error_repeats=args.error_repeats)
+                if args.ablation:
+                    results['J'] = j
+                results['dataset'] = dataset
+                results['options'] = json.dumps(options)
+                results['cg_tol'] = args.cg_tol
+                results['eval_cg_tol']= args.eval_cg_tol
+                results['use_chol'] = args.use_chol
+                results['max_cg_iterations'] = args.max_cg_iterations
+                results['use_toeplitz'] = args.use_toeplitz
+                results['fast_pred_var'] = args.fast_pred
+                results['checkpoint_kernel'] = args.checkpoint_kernel
+                df = pd.concat([df, results])
+                df.to_csv(args.output)
