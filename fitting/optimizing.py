@@ -78,20 +78,24 @@ def train_to_convergence(model, xs, ys,
             print("epoch {}, loss {}".format(i, total_loss))
         if checkpoint and total_loss < best_loss:
             best_loss = total_loss
-            best_model = copy.deepcopy(best_model)
+            best_model = copy.deepcopy(model.state_dict())
 
         if check_conv and i >= patience:
             if smooth and ma[i-patience] - ma[i] < conv_tol:
                 if verbose > 0:
                     print("Reached convergence at {}, MA {} - {} < {}".format(total_loss, ma[i-patience], ma[i], conv_tol))
+                if checkpoint:
+                    model.load_state_dict(best_model)
                 return i
             if not smooth and losses[i-patience] - losses[i] < conv_tol:
                 if verbose > 0:
                     print("Reached convergence at {}, {} - {} < {}".format(total_loss, losses[i-patience], total_loss, conv_tol))
+                if checkpoint:
+                    model.load_state_dict(best_model)
                 return i
 
     if checkpoint:
-        model.load_state_dict(best_model.state_dict())
+        model.load_state_dict(best_model)
     return max_iter
 
 
@@ -101,34 +105,41 @@ def mean_squared_error(y_pred, y_true):
 
 
 def learn_projections(base_kernels, xs, ys, max_projections=10,
-                      mse_threshold=0.0001, post_fit=False, **optim_kwargs):
+                      mse_threshold=0.0001, post_fit=False, backfit_iters=5,
+                      **optim_kwargs):
     n, d = xs.shape
-    residuals = ys
+    pred_means = torch.zeros(max_projections, n)
     models = []
-    for i in range(max_projections):
-        with torch.no_grad():
-            coef = torch.pinverse(xs).matmul(residuals).reshape(1, -1)
+    for bf_iter in range(backfit_iters):
+        for i in range(max_projections):
+            residuals = ys - pred_means[:i, :].sum(dim=0) - pred_means[i+1,:].sum(dim=0)
+            if bf_iter == 0:
+                with torch.no_grad():
+                    coef = torch.pinverse(xs).matmul(residuals).reshape(1, -1)
+                base_kernel = base_kernels[i]
+                projection = torch.nn.Linear(d, 1, bias=False).to(xs)
+                projection.weight.data = coef
+                kernel = ProjectionKernel(projection, base_kernel)
+                model = ExactGPModel(xs, residuals,
+                                     GaussianLikelihood(), kernel).to(xs)
+            else:
+                model = models[i]
+            mll = ExactMarginalLogLikelihood(model.likelihood, model).to(xs)
+            # mll.train()
+            model.train()
+            train_to_convergence(model, xs, residuals,
+                                 objective=mll, **optim_kwargs)
 
-        base_kernel = base_kernels[i]
-        projection = torch.nn.Linear(d, 1, bias=False).to(xs)
-        projection.weight.data = coef
-        kernel = ProjectionKernel(projection, base_kernel)
-        model = ExactGPModel(xs, residuals,
-                             GaussianLikelihood(), kernel).to(xs)
-        mll = ExactMarginalLogLikelihood(model.likelihood, model).to(xs)
-        # mll.train()
-        model.train()
-        train_to_convergence(model, xs, residuals,
-                             objective=mll, **optim_kwargs)
-
-        model.eval()
-        models.append(model)
-        with torch.no_grad():
-            residuals = residuals - model(xs).mean
-            mse = (residuals ** 2).mean()
-            print(mse.item(), end='; ')
-            if mse < mse_threshold:
-                break
+            model.eval()
+            models.append(model)
+            with torch.no_grad():
+                pred_mean = model(xs).mean
+                pred_means[i, :] = pred_mean
+                residuals = residuals - pred_mean
+                mse = (residuals ** 2).mean()
+                print(mse.item(), end='; ')
+                if mse < mse_threshold:
+                    break
     print()
     joint_kernel = AdditiveKernel(*[model.covar_module for model in models])
     joint_model = ExactGPModel(xs, ys, GaussianLikelihood(), joint_kernel).to(xs)
