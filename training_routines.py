@@ -1,7 +1,7 @@
 import math
 import rp
 from gp_models import ExactGPModel, ProjectionKernel, \
-    LinearRegressionModel, PolynomialProjectionKernel, DNN,\
+    PolynomialProjectionKernel, DNN,\
     GeneralizedPolynomialProjectionKernel, GeneralizedProjectionKernel, StrictlyAdditiveKernel, AdditiveKernel, DuvenaudAdditiveKernel
 from gp_models.kernels import ManualRescaleProjectionKernel, InverseMQKernel
 import gpytorch

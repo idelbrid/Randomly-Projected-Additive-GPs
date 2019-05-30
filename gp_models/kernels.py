@@ -442,45 +442,45 @@ class DuvenaudAdditiveKernel(gpytorch.kernels.Kernel):
         return (self.outputscale.reshape(-1, 1, 1) * e_n[1:]).sum(dim=0)
 
 
-class LinearRegressionModel(torch.nn.Module):
-    """Currently unused LR model"""
-    def __init__(self, trainX, trainY):
-        super(LinearRegressionModel, self).__init__()
-        [n, d] = trainX.shape
-        [m, k] = trainY.shape
-        if not n == m:
-            raise ValueError
+# class LinearRegressionModel(torch.nn.Module):
+#     """Currently unused LR model"""
+#     def __init__(self, trainX, trainY):
+#         super(LinearRegressionModel, self).__init__()
+#         [n, d] = trainX.shape
+#         [m, k] = trainY.shape
+#         if not n == m:
+#             raise ValueError
+#
+#         self.linear = torch.nn.Linear(d, k)
+#
+#     def forward(self, x):
+#         out = self.linear(x)
+#         return out
 
-        self.linear = torch.nn.Linear(d, k)
 
-    def forward(self, x):
-        out = self.linear(x)
-        return out
-
-
-class ELMModule(torch.nn.Module):
-    """Currently unused "extreme learning machine" model"""
-    def __init__(self, trainX, trainY, A, b, activation='sigmoid'):
-        super(ELMModule, self).__init__()
-        [n, d] = trainX.shape
-        [m, _] = trainY.shape
-        [d_, k] = A.shape
-        if not n == m:
-            raise ValueError
-        if not d == d_:
-            raise ValueError
-        self.linear = torch.nn.Linear(k, 1)
-        self.A = A
-        self.b = b.unsqueeze(0)
-
-    def forward(self, x):
-        hl = x.matmul(self.A)+self.b
-        if self.activation == 'sigmoid':
-            hl = torch.nn.Sigmoid(hl)
-        else:
-            raise ValueError
-        out = self.linear(hl)
-        return out
+# class ELMModule(torch.nn.Module):
+#     """Currently unused "extreme learning machine" model"""
+#     def __init__(self, trainX, trainY, A, b, activation='sigmoid'):
+#         super(ELMModule, self).__init__()
+#         [n, d] = trainX.shape
+#         [m, _] = trainY.shape
+#         [d_, k] = A.shape
+#         if not n == m:
+#             raise ValueError
+#         if not d == d_:
+#             raise ValueError
+#         self.linear = torch.nn.Linear(k, 1)
+#         self.A = A
+#         self.b = b.unsqueeze(0)
+#
+#     def forward(self, x):
+#         hl = x.matmul(self.A)+self.b
+#         if self.activation == 'sigmoid':
+#             hl = torch.nn.Sigmoid(hl)
+#         else:
+#             raise ValueError
+#         out = self.linear(hl)
+#         return out
 
 
 class ProjectionKernel(gpytorch.kernels.Kernel):
@@ -525,6 +525,19 @@ class ManualRescaleProjectionKernel(gpytorch.kernels.Kernel):
             x2 = x2.div(self.lengthscale)
 
         return self.base_kernel(x1, x2, **params)
+
+#
+# class PseudoAdditiveKernel(gpytorch.kernels.Kernel):
+#     def __init__(self, base_kernel, num_dims):
+#         super(PseudoAdditiveKernel, self).__init__()
+#         self.base_kernel = base_kernel
+#         self.num_dims = num_dims
+#         self._additive_kernel = gpytorch.kernels.AdditiveStructureKernel(
+#             base_kernel, num_dims)
+#
+#     def forward(self, x1, x2, diag=False, last_dim_is_batch=False, **params):
+#         k = self._additive_kernel(x1, x2, diag=diag, last_dim_is_batch=last_dim_is_batch, **params)
+#         return gpytorch.lazy.delazify(k)
 
 
 def postprocess_inverse_mq(dist):

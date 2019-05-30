@@ -187,6 +187,37 @@ def compute_spherical_t_design(d, t=5, N=None):
     return X.matmul(Q).to(torch.float)
 
 
+def riesz_s_energy(d, N, s=4):
+    def V(X):  # Variational form
+        distances = torch.cdist(X, X, 1) + torch.eye(X.shape[0], dtype=torch.double)
+        total_energy = distances.pow(-s).mean()
+        return total_energy
+        # return X.matmul(X.t()).pow(4).mean()
+
+    bounds = []
+    for i in range(N):
+        bounds.extend([[0, pi] for _ in range(d-1)] + [[0, 2 * pi]])
+
+    def wrapper(phi):
+        phi = torch.from_numpy(phi).view(N, d).contiguous().requires_grad_(True)
+        X = _from_spherical(phi.tril(-1))
+        X = torch.cat([X, -X])
+        loss = V(X)
+        loss.backward(retain_graph=True)
+        gradf = _arrayify(phi.grad.view(-1))
+        fval = loss.item()
+        return fval, gradf
+
+    x0 = _initialize(N, d).flatten()
+    res = minimize(wrapper, x0, jac=True, method='L-BFGS-B', tol=1e-16, options=dict(maxiter=1000))
+    print(res)
+    phi = torch.from_numpy(res.x).view(N, d).contiguous().requires_grad_(False)
+    X = _from_spherical(phi.tril())
+    Q,R = torch.qr(torch.rand(d+1, d+1, dtype=torch.double))
+    return X.matmul(Q).to(torch.float)
+
+
+
 def space_equally(P, lr, niter):
     P.requires_grad = True
     n, d = P.shape
@@ -219,6 +250,8 @@ def space_equally(P, lr, niter):
     P.data.div_(norms.data)
     P.requires_grad = False
     return P, summation
+
+
 
 
 if __name__ == '__main__':
