@@ -68,6 +68,7 @@ def train_to_convergence(model, xs, ys,
                 loss.backward()
                 return loss
             loss = optimizer_.step(closure).item()
+            torch.cuda.empty_cache()
             if verbose > 1:
                 print("epoch {}, iter {}, loss {}".format(i, j, loss))
             total_loss = total_loss + loss
