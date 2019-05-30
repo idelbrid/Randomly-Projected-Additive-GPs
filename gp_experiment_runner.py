@@ -165,10 +165,10 @@ def run_experiment(training_routine: Callable,
         n_errors = 0
         while not succeed and n_errors < error_repeats:
             try:
-                trainX = torch.tensor(train[features].values, dtype=torch.float)
-                trainY = torch.tensor(train['target'].values, dtype=torch.float)
-                testX = torch.tensor(test[features].values, dtype=torch.float)
-                testY = torch.tensor(test['target'].values, dtype=torch.float)
+                trainX = torch.tensor(train[features].values, dtype=torch.float).contiguous()
+                trainY = torch.tensor(train['target'].values, dtype=torch.float).contiguous()
+                testX = torch.tensor(test[features].values, dtype=torch.float).contiguous()
+                testY = torch.tensor(test['target'].values, dtype=torch.float).contiguous()
 
                 for repeat in range(repeats):
                     result_dict = {'fold': fold,
@@ -304,6 +304,7 @@ if __name__ == '__main__':
     parser.add_argument('-r', '--repeats', type=int, default=1, required=False, help='number of times to repeat each fold')
     parser.add_argument('--no_cv', action='store_false', dest='cv')
     parser.add_argument('--cg_tol', type=float, default=0.05, required=False)
+    parser.add_argument('--eval_cg_tol', type=float, default=0.01, required=False)
     parser.add_argument('--fast_pred', dest='fast_pred', action='store_true')
     parser.add_argument('--use_chol', action='store_true')
     parser.add_argument('--no_toeplitz', dest='use_toeplitz', action='store_false')
@@ -362,7 +363,7 @@ if __name__ == '__main__':
     df = pd.DataFrame()
     for dataset in datasets:
         print('Starting dataset {}'.format(dataset))
-        with gpytorch.settings.cg_tolerance(args.cg_tol),gpytorch.settings.fast_computations(not args.use_chol, not args.use_chol, not args.use_chol),gpytorch.settings.fast_pred_var(args.fast_pred):
+        with gpytorch.settings.cg_tolerance(args.cg_tol),gpytorch.settings.eval_cg_tolerance(args.eval_cg_tol), gpytorch.settings.fast_computations(not args.use_chol, not args.use_chol, not args.use_chol),gpytorch.settings.fast_pred_var(args.fast_pred):
             with gpytorch.settings.use_toeplitz(args.use_toeplitz), gpytorch.settings.max_cg_iterations(args.max_cg_iterations):
                 if args.ablation:
                     jlist = [1, 2, 3, 5, 8, 13, 21, 34]
@@ -388,6 +389,7 @@ if __name__ == '__main__':
                     results['dataset'] = dataset
                     results['options'] = json.dumps(options)
                     results['cg_tol'] = args.cg_tol
+                    results['eval_cg_tol']= args.eval_cg_tol
                     results['use_chol'] = args.use_chol
                     results['max_cg_iterations'] = args.max_cg_iterations
                     results['use_toeplitz'] = args.use_toeplitz
