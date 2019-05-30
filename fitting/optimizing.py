@@ -8,12 +8,13 @@ from gp_models.models import ExactGPModel
 from gpytorch.likelihoods import GaussianLikelihood
 from gpytorch.mlls import ExactMarginalLogLikelihood
 from gpytorch.kernels import AdditiveKernel
+import copy
 
 def train_to_convergence(model, xs, ys,
                          optimizer: Optional[Type]=None, lr=0.1, objective=None,
                          max_iter=100, verbose=0, patience=20,
                          conv_tol=1e-4, check_conv=True, smooth=True,
-                         isloss=False, batch_size=None):
+                         isloss=False, batch_size=None, checkpoint=False):
     """The core optimization routine
 
     :param model: the model (usually a GPyTorch model, usually an ExactGP model) to fit
@@ -48,6 +49,8 @@ def train_to_convergence(model, xs, ys,
     # instantiating optimizer
     optimizer_ = optimizer(model.parameters(), lr=lr)
 
+    best_model = None
+    best_loss = np.inf
     losses = np.zeros((max_iter,))
     ma = np.zeros((max_iter,))
     for i in range(max_iter):
@@ -72,6 +75,10 @@ def train_to_convergence(model, xs, ys,
         ma[i] = losses[i-patience+1:i+1].mean()
         if verbose > 0:
             print("epoch {}, loss {}".format(i, total_loss))
+        if checkpoint and total_loss < best_loss:
+            best_loss = total_loss
+            best_model = copy.deepcopy(best_model)
+
         if check_conv and i >= patience:
             if smooth and ma[i-patience] - ma[i] < conv_tol:
                 if verbose > 0:
@@ -81,6 +88,9 @@ def train_to_convergence(model, xs, ys,
                 if verbose > 0:
                     print("Reached convergence at {}, {} - {} < {}".format(total_loss, losses[i-patience], total_loss, conv_tol))
                 return i
+
+    if checkpoint:
+        model.load_state_dict(best_model.state_dict())
     return max_iter
 
 
