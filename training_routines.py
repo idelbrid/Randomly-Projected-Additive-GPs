@@ -5,7 +5,7 @@ from gp_models import ExactGPModel, ProjectionKernel, \
     GeneralizedPolynomialProjectionKernel, GeneralizedProjectionKernel, StrictlyAdditiveKernel, AdditiveKernel, DuvenaudAdditiveKernel
 from gp_models.kernels import ManualRescaleProjectionKernel, InverseMQKernel
 import gpytorch
-from gpytorch.kernels import ScaleKernel, RBFKernel, GridInterpolationKernel, MaternKernel
+from gpytorch.kernels import ScaleKernel, RBFKernel, GridInterpolationKernel, MaternKernel, InducingPointKernel
 from gpytorch.mlls import VariationalELBO, VariationalMarginalLogLikelihood
 from gp_models import SVGPRegressionModel
 import torch
@@ -366,6 +366,35 @@ def create_full_kernel(d, ard=False, ski=False, grid_size=None, kernel_type='RBF
     return kernel
 
 
+def create_sgpr_kernel(d, ard=False, kernel_type='RBF', inducing_points=800, init_lengthscale_range=(1.0, 1.0),
+                       X=None, likelihood=None):
+    if ard:
+        ard_num_dims = d
+    else:
+        ard_num_dims = None
+    if kernel_type == 'RBF':
+        kernel = gpytorch.kernels.RBFKernel(ard_num_dims=ard_num_dims)
+    elif kernel_type == 'Matern':
+        kernel = gpytorch.kernels.MaternKernel(nu=1.5, ard_num_dims=ard_num_dims)
+    elif kernel_type == 'InverseMQ':
+        kernel = InverseMQKernel(ard_num_dims=ard_num_dims)
+    else:
+        raise ValueError("Unknown kernel type")
+
+    if ard:
+        samples = ard_num_dims
+    else:
+        samples = 1
+    kernel.initialize(lengthscale=_sample_from_range(samples, init_lengthscale_range))
+
+    if X is None:
+        raise ValueError("X is required")
+    if likelihood is None:
+        raise ValueError("Likelihood is required")
+    kernel = InducingPointKernel(kernel, X[:inducing_points], likelihood)
+    return kernel
+
+
 def create_svi_gp(trainX, kind, **kwargs):
     """Create a SVGP model with a specified kernel.
     rp: if True, use a random projection kernel
@@ -479,7 +508,7 @@ def create_exact_gp(trainX, trainY, kind, **kwargs):
         """
     [n, d] = trainX.shape
     if kind not in ['full', 'rp', 'strictly_additive', 'additive', 'pca', 'pca_rp', 'rp_poly', 'deep_rp_poly',
-                    'general_rp_poly', 'multi_full', 'duvenaud_additive', 'additive_rp']:
+                    'general_rp_poly', 'multi_full', 'duvenaud_additive', 'additive_rp', 'sgpr']:
         raise ValueError("Unknown kernel structure type {}".format(kind))
 
     # regular Gaussian likelihood for regression problem
@@ -537,6 +566,8 @@ def create_exact_gp(trainX, trainY, kind, **kwargs):
         kernel = create_general_rp_poly_kernel(d, X=trainX, **kwargs)
     elif kind == 'additive_rp':
         kernel = create_additive_rp_kernel(d, **kwargs)
+    elif kind == 'sgpr':
+        kernel = create_sgpr_kernel(d, X=trainX, likelihood=likelihood, **kwargs)
     elif kind == 'pca_rp':
         # TODO: modify to work with PCA RP
         raise NotImplementedError("Apparently not working with PCA RP??")

@@ -1,0 +1,17 @@
+{
+  "kind": "sgpr",
+  "model_kwargs": {
+    "noise_prior": true,
+    "kernel_type": "RBF",
+    "ard": true,
+    "inducing_points": 400
+  },
+  "train_kwargs": {
+    "verbose": false,
+    "optimizer": "adam",
+    "max_iter": 1000,
+    "lr": 0.1,
+    "patience": 20,
+    "smooth": true
+  }
+}
