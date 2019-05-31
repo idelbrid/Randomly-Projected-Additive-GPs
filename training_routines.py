@@ -109,7 +109,8 @@ def create_rp_poly_kernel(d, k, J, activation=None,
     return kernel
 
 def create_additive_rp_kernel(d, J, learn_proj=False, kernel_type='RBF', space_proj=False, prescale=False, ard=True,
-                              init_lengthscale_range=(1., 1.), ski=False, ski_options=None, proj_dist='gaussian'):
+                              init_lengthscale_range=(1., 1.), ski=False, ski_options=None, proj_dist='gaussian',
+                              batch_kernel=True, ):
     projs = [rp.gen_rp(d, 1, dist=proj_dist) for _ in range(J)]
     # bs = [torch.zeros(1) for _ in range(J)]
     if space_proj:
@@ -121,23 +122,31 @@ def create_additive_rp_kernel(d, J, learn_proj=False, kernel_type='RBF', space_p
     proj_module.weight.data = torch.cat(projs, dim=1).t()
     # proj_module.bias.data = torch.cat(bs, dim=0)
 
-    if kernel_type == 'RBF':
-        kernel = gpytorch.kernels.RBFKernel()
-    elif kernel_type == 'Matern':
-        kernel = gpytorch.kernels.MaternKernel(nu=1.5)
-    elif kernel_type == 'Cosine':
-        kernel = gpytorch.kernels.CosineKernel()
+    def make_kernel(active_dim=None):
+        if kernel_type == 'RBF':
+            kernel = gpytorch.kernels.RBFKernel(active_dims=active_dim)
+        elif kernel_type == 'Matern':
+            kernel = gpytorch.kernels.MaternKernel(nu=1.5, active_dims=active_dim)
+        elif kernel_type == 'Cosine':
+            kernel = gpytorch.kernels.CosineKernel(active_dims=active_dim)
+        else:
+            raise ValueError("Unknown kernel type")
+        if hasattr(kernel, 'period_length'):
+            kernel.initialize(period_length=torch.tensor([1.]))
+        else:
+            kernel.initialize(lengthscale=torch.tensor([1.]))
+        kernel = ScaleKernel(kernel)
+        kernel.initialize(outputscale=torch.tensor([1/J]))
+        if ski:
+            kernel = gpytorch.kernels.GridInterpolationKernel(kernel, **ski_options)
+        return kernel
+
+    if batch_kernel:
+        kernel = make_kernel(None)
+        add_kernel = gpytorch.kernels.AdditiveStructureKernel(kernel, J)
     else:
-        raise ValueError("Unknown kernel type")
-    if hasattr(kernel, 'period_length'):
-        kernel.initialize(period_length=torch.tensor([1.]))
-    else:
-        kernel.initialize(lengthscale=torch.tensor([1.]))
-    kernel = ScaleKernel(kernel)
-    kernel.initialize(outputscale=torch.tensor([1/J]))
-    if ski:
-        kernel = gpytorch.kernels.GridInterpolationKernel(kernel, **ski_options)
-    add_kernel = gpytorch.kernels.AdditiveStructureKernel(kernel, J)
+        kernels = [make_kernel(i) for i in range(J)]
+        add_kernel = gpytorch.kernels.AdditiveKernel(*kernels)
     if ard:
         if prescale:
             ard_num_dims = d
