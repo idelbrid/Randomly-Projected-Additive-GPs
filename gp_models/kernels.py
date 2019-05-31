@@ -513,18 +513,31 @@ class ManualRescaleProjectionKernel(gpytorch.kernels.Kernel):
         self.prescale = prescale
 
     def forward(self, x1, x2, diag=False, last_dim_is_batch=False, **params):
+        eq = torch.equal(x1, x2)
         if self.prescale:
             x1 = x1.div(self.lengthscale)
-            x2 = x2.div(self.lengthscale)
-
         x1 = self.projection_module(x1)
-        x2 = self.projection_module(x2)
-
         if not self.prescale:
             x1 = x1.div(self.lengthscale)
-            x2 = x2.div(self.lengthscale)
 
+        if eq:
+            x2 = x1
+        else:
+            if self.prescale:
+                x2.div(self.lengthscale)
+            x2 = self.projection_module(x2)
+            if not self.prescale:
+                x2.div(self.lengthscale)
         return self.base_kernel(x1, x2, **params)
+#
+# class MemoryEfficientGamKernel(gpytorch.kernels.Kernel):
+#     def __init__(self, **kwargs):
+#         super(MemoryEfficientGamKernel, self).__init__(has_lengthscale=True, **kwargs)
+#
+#     def forward(self, x1, x2, diag=False, last_dim_is_batch=False, **params):
+#         x1_ = x1.div(self.lengthscale)
+#         x2_ = x2.div(self.lengthscale)
+#
 
 #
 # class PseudoAdditiveKernel(gpytorch.kernels.Kernel):
