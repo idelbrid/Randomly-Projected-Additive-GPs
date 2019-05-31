@@ -327,11 +327,12 @@ if __name__ == '__main__':
 
     print('Loaded options', options)
 
-    print('Using device {}'.format(args.device))
+    devices = args.device.split(',')
+    print('Using device(s) {}'.format(devices))
 
     print('Registered data base path {}'.format(data_base_path))
 
-    options['device'] = args.device
+    options['devices'] = devices
     options['skip_posterior_variances'] = args.skip_posterior_variances
     options['evaluate_on_train'] = not args.skip_evaluate_on_train
 

@@ -5,7 +5,7 @@ from gp_models import ExactGPModel, ProjectionKernel, \
     GeneralizedPolynomialProjectionKernel, GeneralizedProjectionKernel, StrictlyAdditiveKernel, AdditiveKernel, DuvenaudAdditiveKernel
 from gp_models.kernels import ManualRescaleProjectionKernel, InverseMQKernel
 import gpytorch
-from gpytorch.kernels import ScaleKernel, RBFKernel, GridInterpolationKernel, MaternKernel, InducingPointKernel
+from gpytorch.kernels import ScaleKernel, RBFKernel, GridInterpolationKernel, MaternKernel, InducingPointKernel, MultiDeviceKernel
 from gpytorch.mlls import VariationalELBO, VariationalMarginalLogLikelihood
 from gp_models import SVGPRegressionModel
 import torch
@@ -492,7 +492,7 @@ def train_svi_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwargs)
     #     pass
 
 
-def create_exact_gp(trainX, trainY, kind, **kwargs):
+def create_exact_gp(trainX, trainY, kind, devices=('cpu',), **kwargs):
     """Create an exact GP model with a specified kernel.
         rp: if True, use a random projection kernel
         k: dimension of the projections (ignored if rp is False)
@@ -578,6 +578,8 @@ def create_exact_gp(trainX, trainY, kind, **kwargs):
         raise ValueError()
 
     kernel = gpytorch.kernels.ScaleKernel(kernel)
+    if len(devices) > 1:
+        kernel = MultiDeviceKernel(kernel, devices, devices[0])
     model = ExactGPModel(trainX, trainY, likelihood, kernel)
     return model, likelihood
 
@@ -638,17 +640,18 @@ def train_ppr_gp(trainX, trainY, testX, testY, model_kwargs, train_kwargs, devic
 
 # TODO: raise a warning if somewhat important options are missing.
 # TODO: change the key word arguments to model options and rename train_kwargs to train options. This applies to basically all of the functions here.
-def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwargs, device='cpu',
+def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwargs, devices=('cpu',),
                    skip_posterior_variances=False, skip_random_restart=False, evaluate_on_train=True):
     """Create and train an exact GP with the given options"""
     model_kwargs = copy.copy(model_kwargs)
     train_kwargs = copy.copy(train_kwargs)
     d = trainX.shape[-1]
-    device = torch.device(device)
-    trainX = trainX.to(device)
-    trainY = trainY.to(device)
-    testX = testX.to(device)
-    testY = testY.to(device)
+    devices = [torch.device(device) for device in devices]
+    output_device = devices[0]
+    trainX = trainX.to(output_device)
+    trainY = trainY.to(output_device)
+    testX = testX.to(output_device)
+    testY = testY.to(output_device)
 
     # replace with value from dataset for convenience
     for k, v in list(model_kwargs.items()):
@@ -672,8 +675,8 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
         # Do some number of random restarts, keeping the best one after a truncated training.
         for restart in range(random_restarts):
             # TODO: log somehow what's happening in the restarts.
-            model, likelihood = create_exact_gp(trainX, trainY, kind, **model_kwargs)
-            model = model.to(device)
+            model, likelihood = create_exact_gp(trainX, trainY, kind, devices=devices, **model_kwargs)
+            model = model.to(output_device)
 
             # regular marginal log likelihood
             mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
@@ -692,7 +695,7 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
         mll = best_mll
     else:
         model, likelihood = create_exact_gp(trainX, trainY, kind, **model_kwargs)
-        model = model.to(device)
+        model = model.to(output_device)
         mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
 
     # fit GP
