@@ -1,7 +1,7 @@
 from unittest import TestCase
 from gp_models import ProjectionKernel, PolynomialProjectionKernel, ExactGPModel, GeneralizedPolynomialProjectionKernel
 from gp_models import AdditiveKernel, StrictlyAdditiveKernel, convert_rp_model_to_additive_model, DuvenaudAdditiveKernel
-from gp_models import ManualRescaleProjectionKernel
+from gp_models import ManualRescaleProjectionKernel, MemoryEfficientGamKernel
 from gp_models.models import AdditiveExactGPModel, ProjectedAdditiveExactGPModel
 from rp import gen_rp, space_equally
 from gp_experiment_runner import load_dataset, _normalize_by_train, _access_fold, _determine_folds
@@ -615,7 +615,6 @@ class TestManualRescaleKernel(TestCase):
 
         np.testing.assert_allclose(K.numpy(), K2.numpy())
 
-
     def test_gradients(self):
         x = torch.tensor([[1., 2., 3.], [1.1, 2.2, 3.3]])
         y = torch.sin(x).sum(dim=1)
@@ -663,3 +662,17 @@ class TestManualRescaleKernel(TestCase):
         np.testing.assert_allclose(proj_kernel2.base_kernel.base_kernel.lengthscale.numpy(), torch.tensor([[1.]]).numpy())
         self.assertFalse(np.allclose(proj_kernel2.projection_module.weight.detach().numpy(), torch.eye(3, dtype=torch.float).numpy()))
         self.assertFalse(np.allclose(proj_kernel2.lengthscale.detach().numpy(), torch.tensor([1., 2., 3.]).numpy()))
+
+
+class TestMemEffGamKernel(TestCase):
+    def test_forward(self):
+        gam_kernel = MemoryEfficientGamKernel()
+        x = torch.tensor([[1., 2., 3.], [1.1, 2.2, 3.3]])
+        K = gam_kernel(x, x).evaluate()
+
+        k = ScaleKernel(RBFKernel())
+        k.initialize(outputscale=1/3)
+        as_kernel = AdditiveStructureKernel(k, 2)
+        K2 = as_kernel(x, x).evaluate()
+
+        np.testing.assert_allclose(K.detach().numpy(), K2.detach().numpy(), atol=1e-6)

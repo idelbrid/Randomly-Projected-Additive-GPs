@@ -529,14 +529,22 @@ class ManualRescaleProjectionKernel(gpytorch.kernels.Kernel):
             if not self.prescale:
                 x2.div(self.lengthscale)
         return self.base_kernel(x1, x2, **params)
-#
-# class MemoryEfficientGamKernel(gpytorch.kernels.Kernel):
-#     def __init__(self, **kwargs):
-#         super(MemoryEfficientGamKernel, self).__init__(has_lengthscale=True, **kwargs)
-#
-#     def forward(self, x1, x2, diag=False, last_dim_is_batch=False, **params):
-#         x1_ = x1.div(self.lengthscale)
-#         x2_ = x2.div(self.lengthscale)
+
+
+def postprocess_ge_GAM(dist):
+    return dist.div_(-2).exp_()
+
+class MemoryEfficientGamKernel(gpytorch.kernels.Kernel):
+    def __init__(self, **kwargs):
+        super(MemoryEfficientGamKernel, self).__init__(has_lengthscale=True, **kwargs)
+
+    def forward(self, x1, x2, diag=False, last_dim_is_batch=False, **params):
+        x1_ = x1.div(self.lengthscale)
+        x2_ = x2.div(self.lengthscale)
+        res = self.covar_dist(x1_, x2_, diag=diag, last_dim_is_batch=True,
+                        square_dist=True, postprocess=True,
+                        dist_postprocess_func=postprocess_ge_GAM)
+        return res.mean(-2 if diag else -3)
 #
 
 #
