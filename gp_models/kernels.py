@@ -239,10 +239,10 @@ class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
     def train(self, mode=True):
         if self.ski:
             for i, k in enumerate(self.kernel.kernels):
-                if self.component_degrees[i] == 1:
-                    subkernels = [k.base_kernel]
-                else:
-                    subkernels = list(k.base_kernel.kernels)
+                # if self.component_degrees[i] == 1:
+                #     subkernels = [k.base_kernel]
+                # else:
+                subkernels = list(k.base_kernel.kernels)
                 for j, kk in enumerate(subkernels):
                     kk.grid_is_dynamic = not mode
                     # print('Setting dynamic {}'.format(not mode))
