@@ -1,0 +1,25 @@
+{
+  "kind": "additive_rp",
+  "model_kwargs": {
+    "J": "d",
+    "noise_prior": true,
+    "kernel_type": "RBF",
+    "learn_proj": false,
+    "prescale": true,
+    "space_proj": true,
+    "batch_kernel": false,
+    "ski": true,
+    "ski_options": {
+      "grid_size": 1024,
+      "num_dims": 1
+    }
+  },
+  "train_kwargs": {
+    "verbose": false,
+    "optimizer": "adam",
+    "max_iter": 1000,
+    "lr": 0.1,
+    "patience": 20,
+    "smooth": true
+  }
+}
