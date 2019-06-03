@@ -519,7 +519,7 @@ def create_exact_gp(trainX, trainY, kind, devices=('cpu',), **kwargs):
         additive: if True, (and not RP) use an additive kernel instead of RP or RBF
         """
     [n, d] = trainX.shape
-    if kind not in ['full', 'rp', 'strictly_additive', 'additive', 'pca', 'pca_rp', 'rp_poly', 'deep_rp_poly',
+    if kind not in ['full', 'rp', 'strictly_additive', 'additive', 'rp_poly', 'deep_rp_poly',
                     'general_rp_poly', 'multi_full', 'duvenaud_additive', 'additive_rp', 'sgpr']:
         raise ValueError("Unknown kernel structure type {}".format(kind))
 
@@ -541,22 +541,22 @@ def create_exact_gp(trainX, trainY, kind, devices=('cpu',), **kwargs):
     elif kind == 'multi_full':
         kernel = create_multi_full_kernel(d, **kwargs)
     elif kind == 'strictly_additive':
-        if ski and grid_size is None:
-            grid_size = int(grid_ratio * math.pow(n, 1))
+        # if ski and grid_size is None:
+        #     grid_size = int(grid_ratio * math.pow(n, 1))
         kernel = create_strictly_additive_kernel(d, X=trainX, **kwargs)
     elif kind == 'additive':
-        if ski and grid_size is None:
-            grid_size = int(grid_ratio * math.pow(n, 1))
+        # if ski and grid_size is None:
+        #     grid_size = int(grid_ratio * math.pow(n, 1))
         kernel = create_additive_kernel(d, X=trainX, **kwargs)
     elif kind == 'duvenaud_additive':
         kernel = create_duvenaud_additive_kernel(d, **kwargs)
-    elif kind == 'pca':
-        # TODO: modify to work with PCA
-        if ski and grid_size is None:
-            grid_size = int(grid_ratio * math.pow(n, 1))
-        kernel = create_pca_kernel(trainX,grid_size=grid_size,
-                                   random_projections=False, k=1,
-                                   **kwargs)
+    # elif kind == 'pca':
+    #     # TODO: modify to work with PCA
+    #     if ski and grid_size is None:
+    #         grid_size = int(grid_ratio * math.pow(n, 1))
+    #     kernel = create_pca_kernel(trainX,grid_size=grid_size,
+    #                                random_projections=False, k=1,
+    #                                **kwargs)
     elif kind == 'rp':
         if ski and grid_size is None:
             grid_size = int(grid_ratio * math.pow(n, 1 / kwargs['k']))
@@ -580,12 +580,12 @@ def create_exact_gp(trainX, trainY, kind, devices=('cpu',), **kwargs):
         kernel = create_additive_rp_kernel(d, **kwargs)
     elif kind == 'sgpr':
         kernel = create_sgpr_kernel(d, X=trainX, likelihood=likelihood, **kwargs)
-    elif kind == 'pca_rp':
-        # TODO: modify to work with PCA RP
-        raise NotImplementedError("Apparently not working with PCA RP??")
-        if grid_size is None:
-            grid_size = int(grid_ratio * math.pow(n, 1 / k))
-        kernel = create_pca_kernel(trainX, **kwargs)
+    # elif kind == 'pca_rp':
+    #     # TODO: modify to work with PCA RP
+    #     raise NotImplementedError("Apparently not working with PCA RP??")
+    #     if grid_size is None:
+    #         grid_size = int(grid_ratio * math.pow(n, 1 / k))
+    #     kernel = create_pca_kernel(trainX, **kwargs)
     else:
         raise ValueError()
 
