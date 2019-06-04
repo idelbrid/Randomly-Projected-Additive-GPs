@@ -210,15 +210,16 @@ def run_experiment(training_routine: Callable,
                 result_dict = dict(error=traceback.format_exc(),
                               fold=fold,
                               n=len(dataset),
-                              d=len(features)-2)
+                              d=len(features)-2,
+                                   mse=np.nan, rmse=np.nan)
                 print(result_dict)
                 traceback.print_exc()
                 results_list.append(result_dict)
                 n_errors += 1
                 print('errors: ', n_errors)
 
-
     results = pd.DataFrame(results_list)
+    print('Mean RMSE = {}'.format(results['rmse'].mean()))
     return results
 
 
@@ -308,6 +309,7 @@ if __name__ == '__main__':
     parser.add_argument('--fast_pred', dest='fast_pred', action='store_true')
     parser.add_argument('--use_chol', action='store_true')
     parser.add_argument('--no_toeplitz', dest='use_toeplitz', action='store_false')
+    parser.add_argument('--memory_efficient', dest='memory_efficient', action='store_true')
     parser.add_argument('--device', type=str, default='cpu', required=False, help='device string to use in PyTorch')
     parser.add_argument('--skip_posterior_variances', action='store_true')
     parser.add_argument('--ablation', action='store_true')
@@ -373,7 +375,8 @@ if __name__ == '__main__':
               gpytorch.settings.fast_pred_var(args.fast_pred), \
               gpytorch.settings.use_toeplitz(args.use_toeplitz), \
               gpytorch.settings.max_cg_iterations(args.max_cg_iterations), \
-              gpytorch.beta_features.checkpoint_kernel(args.checkpoint_kernel):
+              gpytorch.beta_features.checkpoint_kernel(args.checkpoint_kernel), \
+              gpytorch.settings.memory_efficient(args.memory_efficient):
             if args.ablation:
                 jlist = [1, 2, 3, 5, 8, 13, 21, 34]
                 # jlist = [21]   #temporary
