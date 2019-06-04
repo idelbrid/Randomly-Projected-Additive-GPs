@@ -160,17 +160,21 @@ class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
                 product_kernels.append(bkernel)
                 dim_count += 1
             # TODO: re-implement this change when GPyTorch bugfix comes
-            # if len(product_kernels) == 1:
-            #     product_kernel = product_kernels[0]
-            # else:
-            product_kernel = gpytorch.kernels.ProductKernel(*product_kernels)
+            if len(product_kernels) == 1:
+                product_kernel = product_kernels[0]
+                scale_kernel_active_dims = product_kernel.active_dims
+            else:
+                product_kernel = gpytorch.kernels.ProductKernel(*product_kernels)
+                scale_kernel_active_dims = None
             if weighted:
                 product_kernel = gpytorch.kernels.ScaleKernel(product_kernel,
-                                                              outputscale_prior=copy.deepcopy(outputscale_prior))
+                                                              outputscale_prior=copy.deepcopy(outputscale_prior),
+                                                              active_dims=scale_kernel_active_dims)
                 product_kernel.initialize(outputscale=1/len(component_degrees))
             else:
                 product_kernel = gpytorch.kernels.ScaleKernel(product_kernel,
-                                                              outputscale_prior=copy.deepcopy(lengthscale_prior))
+                                                              outputscale_prior=copy.deepcopy(lengthscale_prior),
+                                                              active_dims=scale_kernel_active_dims)
                 product_kernel.initialize(outputscale=1 / len(component_degrees))
                 product_kernel.raw_outputscale.requires_grad = False
             kernels.append(product_kernel)
@@ -213,14 +217,14 @@ class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
     def initialize(self, mixin_range, lengthscale_range):
         mixins = _sample_from_range(len(self.component_degrees), mixin_range)
         mixins = mixins / mixins.sum()
-        mixins.requires_grad = False  # todo: double check this does/doesn't make the parameter learnable
+        mixins.requires_grad = False
         for i, k in enumerate(self.kernel.kernels):
             k.outputscale = mixins[i]
             # TODO: reimplement change when GPyTorch bugfix comes.
-            # if self.component_degrees[i] == 1:
-            #     subkernels = [k.base_kernel]
-            # else:
-            subkernels = list(k.base_kernel.kernels)
+            if self.component_degrees[i] == 1:
+                subkernels = [k.base_kernel]
+            else:
+                subkernels = list(k.base_kernel.kernels)
             for j, kk in enumerate(subkernels):
                 ls = _sample_from_range(1, lengthscale_range)
                 if not isinstance(kk, gpytorch.kernels.GridInterpolationKernel):
@@ -239,10 +243,10 @@ class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
     def train(self, mode=True):
         if self.ski:
             for i, k in enumerate(self.kernel.kernels):
-                # if self.component_degrees[i] == 1:
-                #     subkernels = [k.base_kernel]
-                # else:
-                subkernels = list(k.base_kernel.kernels)
+                if self.component_degrees[i] == 1:
+                    subkernels = [k.base_kernel]
+                else:
+                    subkernels = list(k.base_kernel.kernels)
                 for j, kk in enumerate(subkernels):
                     kk.grid_is_dynamic = not mode
                     # print('Setting dynamic {}'.format(not mode))
