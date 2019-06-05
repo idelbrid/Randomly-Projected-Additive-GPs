@@ -317,7 +317,7 @@ if __name__ == '__main__':
     parser.add_argument('--error_repeats', type=int, default=10, required=False)
     parser.add_argument('--max_cg_iterations', type=int, default=10_000, required=False)
     parser.add_argument('--skip_evaluate_on_train', action='store_true')
-    parser.add_argument('--checkpoint_kernel', type=float, default=0, required=False, help='Split kernel into chunks')
+    parser.add_argument('--checkpoint_kernel', type=int, default=0, required=False, help='Split kernel into chunks')
 
 
     args = parser.parse_args()
@@ -407,5 +407,6 @@ if __name__ == '__main__':
                 results['use_toeplitz'] = args.use_toeplitz
                 results['fast_pred_var'] = args.fast_pred
                 results['checkpoint_kernel'] = args.checkpoint_kernel
+                results['memory_efficient'] = args.memory_efficient
                 df = pd.concat([df, results])
                 df.to_csv(args.output)

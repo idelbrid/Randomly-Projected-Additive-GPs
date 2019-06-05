@@ -209,7 +209,7 @@ class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
             x1_projections = self._project(x1)
         # if x2 is x1, which is common, don't re-project.
         if torch.equal(x1, x2):
-            return self.kernel(x1_projections)
+            return self.kernel(x1_projections, **params)
         else:
             x2_projections = self._project(x2)
             return self.kernel(x1_projections, x2_projections, **params)
@@ -532,7 +532,7 @@ class ManualRescaleProjectionKernel(gpytorch.kernels.Kernel):
             x2 = self.projection_module(x2)
             if not self.prescale:
                 x2.div(self.lengthscale)
-        return self.base_kernel(x1, x2, **params)
+        return self.base_kernel(x1, x2, diag=diag, last_dim_is_batch=last_dim_is_batch, **params)
 
 
 def postprocess_ge_GAM(dist):
