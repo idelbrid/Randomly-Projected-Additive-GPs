@@ -316,6 +316,7 @@ if __name__ == '__main__':
     parser.add_argument('--max_cg_iterations', type=int, default=10_000, required=False)
     parser.add_argument('--skip_evaluate_on_train', action='store_true')
     parser.add_argument('--checkpoint_kernel', type=float, default=0, required=False, help='Split kernel into chunks')
+    parser.add_argument('--skip_log_det_forward', action='store_true', required=False, help='Apply skip log det forward option.')
 
 
     args = parser.parse_args()
@@ -373,7 +374,8 @@ if __name__ == '__main__':
               gpytorch.settings.fast_pred_var(args.fast_pred), \
               gpytorch.settings.use_toeplitz(args.use_toeplitz), \
               gpytorch.settings.max_cg_iterations(args.max_cg_iterations), \
-              gpytorch.beta_features.checkpoint_kernel(args.checkpoint_kernel):
+              gpytorch.beta_features.checkpoint_kernel(args.checkpoint_kernel), \
+              gpytorch.settings.skip_logdet_forward(args.skip_log_det_forward):
             if args.ablation:
                 jlist = [1, 2, 3, 5, 8, 13, 21, 34]
                 # jlist = [21]   #temporary
@@ -404,5 +406,6 @@ if __name__ == '__main__':
                 results['use_toeplitz'] = args.use_toeplitz
                 results['fast_pred_var'] = args.fast_pred
                 results['checkpoint_kernel'] = args.checkpoint_kernel
+                results['skip_log_det_forward'] = args.skip_log_det_forward
                 df = pd.concat([df, results])
                 df.to_csv(args.output)
