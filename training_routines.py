@@ -706,7 +706,7 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
         likelihood = best_likelihood
         mll = best_mll
     else:
-        model, likelihood = create_exact_gp(trainX, trainY, kind, **model_kwargs)
+        model, likelihood = create_exact_gp(trainX, trainY, kind, devices=devices, **model_kwargs)
         model = model.to(output_device)
         mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
 
