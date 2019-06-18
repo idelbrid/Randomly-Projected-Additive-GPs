@@ -14,7 +14,7 @@ def train_to_convergence(model, xs, ys,
                          optimizer: Optional[Type]=None, lr=0.1, objective=None,
                          max_iter=100, verbose=0, patience=20,
                          conv_tol=1e-4, check_conv=True, smooth=True,
-                         isloss=False, batch_size=None, checkpoint=False):
+                         isloss=False, batch_size=None, checkpoint=False, print_freq=1):
     """The core optimization routine
 
     :param model: the model (usually a GPyTorch model, usually an ExactGP model) to fit
@@ -74,8 +74,12 @@ def train_to_convergence(model, xs, ys,
             total_loss = total_loss + loss
         losses[i] = total_loss
         ma[i] = losses[i-patience+1:i+1].mean()
-        if verbose > 0:
-            print("epoch {}, loss {}".format(i, total_loss))
+        if i % print_freq == 0:
+            if verbose == 1:
+                print("epoch {}, loss {}, noise {}".format(i, total_loss, model.likelihood.noise.item()))
+            if verbose > 1:
+                print("epoch {}, loss {}, noise {}, covar_params {}".format(i, total_loss, model.likelihood.noise.item(),
+                                                                        list(model.covar_module.named_parameters())))
         if checkpoint and total_loss < best_loss:
             best_loss = total_loss
             best_model = copy.deepcopy(model.state_dict())
