@@ -317,6 +317,7 @@ if __name__ == '__main__':
     parser.add_argument('--error_repeats', type=int, default=10, required=False)
     parser.add_argument('--max_cg_iterations', type=int, default=10_000, required=False)
     parser.add_argument('--skip_evaluate_on_train', action='store_true')
+    parser.add_argument('--skip_random_restart', action='store_true')
     parser.add_argument('--skip_log_det_forward', action='store_true', required=False, help='Apply skip log det forward option.')
     parser.add_argument('--checkpoint_kernel', type=int, default=0, required=False, help='Split kernel into chunks')
 
@@ -338,6 +339,7 @@ if __name__ == '__main__':
     options['devices'] = devices
     options['skip_posterior_variances'] = args.skip_posterior_variances
     options['evaluate_on_train'] = not args.skip_evaluate_on_train
+    options['skip_random_restart'] = args.skip_random_restart
 
 
     try:
