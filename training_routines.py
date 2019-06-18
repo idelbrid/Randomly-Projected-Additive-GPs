@@ -653,13 +653,17 @@ def train_ppr_gp(trainX, trainY, testX, testY, model_kwargs, train_kwargs, devic
 # TODO: raise a warning if somewhat important options are missing.
 # TODO: change the key word arguments to model options and rename train_kwargs to train options. This applies to basically all of the functions here.
 def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwargs, devices=('cpu',),
-                   skip_posterior_variances=False, skip_random_restart=False, evaluate_on_train=True):
+                   skip_posterior_variances=False, skip_random_restart=False, evaluate_on_train=True,
+                   output_device=None):
     """Create and train an exact GP with the given options"""
     model_kwargs = copy.copy(model_kwargs)
     train_kwargs = copy.copy(train_kwargs)
     d = trainX.shape[-1]
     devices = [torch.device(device) for device in devices]
-    output_device = devices[0]
+    if output_device is None:
+        output_device = devices[0]
+    else:
+        output_device = torch.device(output_device)
     trainX = trainX.to(output_device)
     trainY = trainY.to(output_device)
     testX = testX.to(output_device)
