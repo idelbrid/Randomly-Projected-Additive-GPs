@@ -528,10 +528,10 @@ class ManualRescaleProjectionKernel(gpytorch.kernels.Kernel):
             x2 = x1
         else:
             if self.prescale:
-                x2.div(self.lengthscale)
+                x2 = x2.div(self.lengthscale)
             x2 = self.projection_module(x2)
             if not self.prescale:
-                x2.div(self.lengthscale)
+                x2 = x2.div(self.lengthscale)
         return self.base_kernel(x1, x2, diag=diag, last_dim_is_batch=last_dim_is_batch, **params)
 
 
@@ -551,7 +551,7 @@ class MemoryEfficientGamKernel(gpytorch.kernels.Kernel):
         return res.mean(-2 if diag else -3)
 #
 
-class LowMemoryAdditiveKernel(AdditiveKernel):
+class LowMemoryAdditiveKernel(gpytorch.kernels.AdditiveKernel):
     def __init__(self, *kernels):
         super(LowMemoryAdditiveKernel, self).__init__(*kernels)
 
