@@ -1,7 +1,7 @@
 import torch
 import gpytorch
 import torch.nn.functional as F
-from gpytorch.lazy import SumLazyTensor, ConstantMulLazyTensor, lazify, MulLazyTensor
+from gpytorch.lazy import SumLazyTensor, ConstantMulLazyTensor, lazify, MulLazyTensor, delazify
 import torch.nn as nn
 import rp
 import copy
@@ -551,6 +551,15 @@ class MemoryEfficientGamKernel(gpytorch.kernels.Kernel):
         return res.mean(-2 if diag else -3)
 #
 
+class LowMemoryAdditiveKernel(AdditiveKernel):
+    def __init__(self, *kernels):
+        super(LowMemoryAdditiveKernel, self).__init__(*kernels)
+
+    def forward(self, x1, x2, **params):
+        res = 0
+        for kern in self.kernels:
+            res = res + delazify(kern(x1, x2, **params))
+        return res
 #
 # class PseudoAdditiveKernel(gpytorch.kernels.Kernel):
 #     def __init__(self, base_kernel, num_dims):
