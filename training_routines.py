@@ -3,7 +3,7 @@ import rp
 from gp_models import ExactGPModel, ProjectionKernel, \
     PolynomialProjectionKernel, DNN,\
     GeneralizedPolynomialProjectionKernel, GeneralizedProjectionKernel, StrictlyAdditiveKernel, AdditiveKernel, DuvenaudAdditiveKernel
-from gp_models.kernels import ManualRescaleProjectionKernel, InverseMQKernel, MemoryEfficientGamKernel
+from gp_models.kernels import ManualRescaleProjectionKernel, InverseMQKernel, MemoryEfficientGamKernel, LowMemoryAdditiveKernel
 import gpytorch
 from gpytorch.kernels import ScaleKernel, RBFKernel, GridInterpolationKernel, MaternKernel, InducingPointKernel, MultiDeviceKernel
 from gpytorch.mlls import VariationalELBO, VariationalMarginalLogLikelihood
@@ -144,12 +144,16 @@ def create_additive_rp_kernel(d, J, learn_proj=False, kernel_type='RBF', space_p
     if batch_kernel:
         if mem_efficient :
             add_kernel = MemoryEfficientGamKernel()
+            # add_kernel = LowMemoryAdditiveKernel()
         else:
             kernel = make_kernel(None)
             add_kernel = gpytorch.kernels.AdditiveStructureKernel(kernel, J)
     else:
         kernels = [make_kernel(i) for i in range(J)]
-        add_kernel = gpytorch.kernels.AdditiveKernel(*kernels)
+        if mem_efficient:
+            add_kernel = LowMemoryAdditiveKernel(*kernels)
+        else:
+            add_kernel = gpytorch.kernels.AdditiveKernel(*kernels)
     if ard:
         if prescale:
             ard_num_dims = d
