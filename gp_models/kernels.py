@@ -585,7 +585,6 @@ class GAMFunction(torch.autograd.Function):
     """
     @staticmethod
     def forward(ctx, x1, x2, lengthscale):
-        print('start forward')
         n, d = x1.shape
         m, d2 = x2.shape
         if d2 != d:
@@ -601,12 +600,10 @@ class GAMFunction(torch.autograd.Function):
                 kernel.add_((x1_[:, i].expand(m, -1).t() - x2_[:,i].expand(n, -1)).pow_(2).div_(-2).exp_())
                 # The cdist implementation is dramatically slower!
                 # kernel.add_(torch.cdist(x1_[:, i:i+1], x2_[:, i:i+1]).pow_(2).div_(-2).exp_())
-        print('done')
         return kernel
 
     @staticmethod
     def backward(ctx, grad_output):
-        print('start backward')
         x1, x2, lengthscale = ctx.saved_tensors
         x1_ = x1.div(lengthscale)  # probably could just save the scaled x1/x2 tensors from forward
         x2_ = x2.div(lengthscale)
@@ -633,6 +630,5 @@ class GAMFunction(torch.autograd.Function):
                         x1_grad[:, i] = (Delta_K * signed_diff).sum(dim=1).div_(lengthscale[idx])  # sum over rows/x2s
                     if x2.requires_grad:
                         x2_grad[:, i] = -(Delta_K * signed_diff).sum(dim=0).div_(lengthscale[idx])  # sum over columns/x1s
-        print('done')
         return x1_grad, x2_grad, lengthscale_grad
 
