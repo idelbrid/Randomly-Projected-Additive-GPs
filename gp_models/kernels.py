@@ -592,7 +592,7 @@ class GAMFunction(torch.autograd.Function):
         x1_ = x1.div(lengthscale)  # +n x d vector
         x2_ = x2.div(lengthscale)  # +m x d vector
         ctx.save_for_backward(x1, x2, lengthscale)  # maybe have to change?
-        kernel = torch.zeros(n, m, dtype=x1_.dtype)  # use accumulator+loop instead of expansion
+        kernel = torch.zeros(n, m, dtype=x1_.dtype, device=x1.device)  # use accumulator+loop instead of expansion
         for i in range(d):
             # does cdist still create a new n x m tensor in the graph? Any way to avoid allocating the memory?
             # Should just create temporary n x m tensor and add it to the accumulator.
