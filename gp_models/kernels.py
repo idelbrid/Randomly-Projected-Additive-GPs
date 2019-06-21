@@ -598,7 +598,7 @@ class GAMFunction(torch.autograd.Function):
             # does cdist still create a new n x m tensor in the graph? Any way to avoid allocating the memory?
             # Should just create temporary n x m tensor and add it to the accumulator.
             with torch.no_grad():
-                kernel.add_((x1_[:, i:i+1].expand(m, -1).t() - x2_[:,i:i+1]).pow_(2).div_(-2).exp_())
+                kernel.add_((x1_[:, i].expand(m, -1).t() - x2_[:,i].expand(n, -1)).pow_(2).div_(-2).exp_())
                 # The cdist implementation is dramatically slower!
                 # kernel.add_(torch.cdist(x1_[:, i:i+1], x2_[:, i:i+1]).pow_(2).div_(-2).exp_())
         print('done')
@@ -620,7 +620,7 @@ class GAMFunction(torch.autograd.Function):
         # Again, use accumulators instead of expansion. Less computationally efficient, but more memory efficient.
         with torch.no_grad():
             for i in range(d):
-                signed_diff = x2[:, i].expand(n, -1) - x1[:, i].expand(m, -1).t()
+                signed_diff = x2_[:, i].expand(n, -1) - x1_[:, i].expand(m, -1).t()
                 sq_dist = signed_diff.pow(2)
                 # sq_dist = torch.cdist(x1_[:, i:i + 1], x2_[:, i:i + 1]).pow_(2)
                 K_term = sq_dist.div(-2).exp_()  # one of the kernel summands.
@@ -630,9 +630,9 @@ class GAMFunction(torch.autograd.Function):
 
                 if x1.requires_grad or x2.requires_grad:
                     if x1.requires_grad:
-                        x1_grad[:, i] = (Delta_K * signed_diff).sum(dim=1).div_(lengthscale[idx].pow(2))  # sum over rows/x2s
+                        x1_grad[:, i] = (Delta_K * signed_diff).sum(dim=1).div_(lengthscale[idx])  # sum over rows/x2s
                     if x2.requires_grad:
-                        x2_grad[:, i] = -(Delta_K * signed_diff).sum(dim=0).div_(lengthscale[idx].pow(2))  # sum over columns/x1s
+                        x2_grad[:, i] = -(Delta_K * signed_diff).sum(dim=0).div_(lengthscale[idx])  # sum over columns/x1s
         print('done')
         return x1_grad, x2_grad, lengthscale_grad
 
