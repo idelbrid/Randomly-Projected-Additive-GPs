@@ -3,7 +3,7 @@ import rp
 from gp_models import ExactGPModel, ProjectionKernel, \
     PolynomialProjectionKernel, DNN,\
     GeneralizedPolynomialProjectionKernel, GeneralizedProjectionKernel, StrictlyAdditiveKernel, AdditiveKernel, DuvenaudAdditiveKernel
-from gp_models.kernels import ManualRescaleProjectionKernel, InverseMQKernel, MemoryEfficientGamKernel, LowMemoryAdditiveKernel
+from gp_models.kernels import ManualRescaleProjectionKernel, InverseMQKernel, MemoryEfficientGamKernel
 import gpytorch
 from gpytorch.kernels import ScaleKernel, RBFKernel, GridInterpolationKernel, MaternKernel, InducingPointKernel, MultiDeviceKernel
 from gpytorch.mlls import VariationalELBO, VariationalMarginalLogLikelihood
@@ -141,19 +141,20 @@ def create_additive_rp_kernel(d, J, learn_proj=False, kernel_type='RBF', space_p
             kernel = gpytorch.kernels.GridInterpolationKernel(kernel, **ski_options)
         return kernel
 
-    if batch_kernel:
-        if mem_efficient :
-            add_kernel = MemoryEfficientGamKernel()
-            # add_kernel = LowMemoryAdditiveKernel()
-        else:
-            kernel = make_kernel(None)
-            add_kernel = gpytorch.kernels.AdditiveStructureKernel(kernel, J)
+    if mem_efficient:
+        if ski:
+            raise ValueError("Not implemented yet")
+        if batch_kernel:
+            raise ValueError("Impossible to have batch kernel and memory efficient GAM")
+        if kernel_type != 'RBF':
+            raise ValueError("Memory efficient GAM with alternative sub-kernels not implemented yet.")
+        add_kernel = MemoryEfficientGamKernel()
+    elif batch_kernel:
+        kernel = make_kernel(None)
+        add_kernel = gpytorch.kernels.AdditiveStructureKernel(kernel, J)
     else:
         kernels = [make_kernel(i) for i in range(J)]
-        if mem_efficient:
-            add_kernel = LowMemoryAdditiveKernel(*kernels)
-        else:
-            add_kernel = gpytorch.kernels.AdditiveKernel(*kernels)
+        add_kernel = gpytorch.kernels.AdditiveKernel(*kernels)
     if ard:
         if prescale:
             ard_num_dims = d
@@ -240,11 +241,16 @@ def create_rp_kernel(d, k, J, ard=False, activation=None, ski=False,
 
 
 def create_strictly_additive_kernel(d, weighted=False, kernel_type='RBF', init_lengthscale_range=(1.0, 1.0),
-                                    init_mixin_range=(1.0, 1.0), ski=False, ski_options=None, X=None):
+                                    init_mixin_range=(1.0, 1.0), ski=False, ski_options=None, X=None,
+                                    memory_efficient=False):
     """Inefficient implementation of a kernel where each dimension has its own RBF subkernel."""
-    # TODO: add random initialization
 
-    if kernel_type == 'RBF':
+    if kernel_type == 'RBF' and memory_efficient:
+        # TODO: account for kernel scaling.
+        kernel = MemoryEfficientGamKernel()
+        kernel.initialize(lengthscale=_sample_from_range(d, init_lengthscale_range))
+        return kernel
+    elif kernel_type == 'RBF':
         kernel = gpytorch.kernels.RBFKernel
         kwargs = dict()
     elif kernel_type == 'Matern':
