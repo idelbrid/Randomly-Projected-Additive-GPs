@@ -620,10 +620,9 @@ class GAMFunction(torch.autograd.Function):
             for i in range(d):
                 sq_dist = (x2_[:, i].expand(n,-1) - x1_[:, i].view(n, 1)).pow_(2)
                 # sq_dist = torch.cdist(x1_[:, i:i + 1], x2_[:, i:i + 1]).pow_(2)
-                K_term = sq_dist.div(-2).exp_()  # one of the kernel summands.
-                Delta_K = grad_output * K_term  # reused below
+                Delta_K = sq_dist.div(-2).exp_().mul_(grad_output)  # Reused below.
                 idx = i if num_l > 1 else 0
-                lengthscale_grad[idx] += sq_dist.mul_(Delta_K).sum().div(lengthscale[idx])
+                lengthscale_grad[idx].add_(sq_dist.mul_(Delta_K).sum().div(lengthscale[idx]))
 
                 if x1.requires_grad or x2.requires_grad:
                     Delta_K_diff = (x2_[:, i].expand(n, -1) - x1_[:, i].view(n, 1)).mul_(Delta_K)
