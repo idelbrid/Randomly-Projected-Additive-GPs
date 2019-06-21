@@ -541,25 +541,11 @@ def postprocess_ge_GAM(dist):
 class MemoryEfficientGamKernel(gpytorch.kernels.Kernel):
     def __init__(self, **kwargs):
         super(MemoryEfficientGamKernel, self).__init__(has_lengthscale=True, **kwargs)
+        self.covar_dist = GAMFunction()
 
     def forward(self, x1, x2, diag=False, last_dim_is_batch=False, **params):
-        x1_ = x1.div(self.lengthscale)
-        x2_ = x2.div(self.lengthscale)
-        res = self.covar_dist(x1_, x2_, diag=diag, last_dim_is_batch=True,
-                        square_dist=True, postprocess=True,
-                        dist_postprocess_func=postprocess_ge_GAM)
-        return res.mean(-2 if diag else -3)
-#
+        return self.covar_dist.apply(x1, x2, self.lengthscale)
 
-class LowMemoryAdditiveKernel(gpytorch.kernels.AdditiveKernel):
-    def __init__(self, *kernels):
-        super(LowMemoryAdditiveKernel, self).__init__(*kernels)
-
-    def forward(self, x1, x2, **params):
-        res = 0
-        for kern in self.kernels:
-            res = res + delazify(kern(x1, x2, **params))
-        return res
 #
 # class PseudoAdditiveKernel(gpytorch.kernels.Kernel):
 #     def __init__(self, base_kernel, num_dims):
@@ -589,3 +575,58 @@ class InverseMQKernel(gpytorch.kernels.Kernel):
         return self.covar_dist(x1_, x2_, diag=diag, last_dim_is_batch=last_dim_is_batch, square_dist=True,
                                postprocess=True, dist_postprocess_func=postprocess_inverse_mq)
         # return dist.add_(self.gamma**2).pow_(-1/2).mul_(self.gamma**2)
+
+
+class GAMFunction(torch.autograd.Function):
+    """Function to compute sum of RBF kernels with efficient memory usage (Only O(nm) memory)
+    The result of forward/backward are n x m matrices, so we can get away with only allocating n x m matrices at a time
+        instead of expanding to a d x n x m matrix.
+    Does not support batch mode!
+    """
+    @staticmethod
+    def forward(ctx, x1, x2, lengthscale):
+        n, d = x1.shape
+        m, d2 = x2.shape
+        if d2 != d:
+            raise ValueError("Dimension mismatch")
+        x1_ = x1.div(lengthscale)  # +n x d vector
+        x2_ = x2.div(lengthscale)  # +m x d vector
+        ctx.save_for_backward(x1, x2, lengthscale)  # maybe have to change?
+        kernel = torch.zeros(n, m, dtype=x1_.dtype)  # use accumulator+loop instead of expansion
+        for i in range(d):
+            # does cdist still create a new n x m tensor in the graph? Any way to avoid allocating the memory?
+            # Should just create temporary n x m tensor and add it to the accumulator.
+            with torch.no_grad():
+                kernel.add_(torch.cdist(x1_[:, i:i+1], x2_[:, i:i+1]).pow_(2).div_(-2).exp_())
+        return kernel
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        x1, x2, lengthscale = ctx.saved_tensors
+        x1_ = x1.div(lengthscale)  # probably could just save the scaled x1/x2 tensors from forward
+        x2_ = x2.div(lengthscale)
+        n, d = x1.shape
+        m, d2 = x2.shape
+        num_l = torch.numel(lengthscale)  # support ARD/single lengthscale
+        lengthscale_grad = torch.zeros_like(lengthscale)
+        x1_grad = torch.zeros_like(x1) if x1.requires_grad else None
+        x2_grad = torch.zeros_like(x2) if x2.requires_grad else None
+
+        # Again, use accumulators instead of expansion. Less computationally efficient, but more memory efficient.
+        with torch.no_grad():
+            for i in range(d):
+                sq_dist = torch.cdist(x1_[:, i:i + 1], x2_[:, i:i + 1]).pow_(2)
+                K_term = sq_dist.div(-2).exp_()  # one of the kernel summands.
+                Delta_K = grad_output * K_term  # reused below
+                idx = i if num_l > 1 else 0
+                lengthscale_grad[idx] += (Delta_K * sq_dist.div(lengthscale[idx])).sum()
+
+                if x1.requires_grad or x2.requires_grad:
+                    signed_diff = x2[:, i].expand(n, -1) - x1[:, i].expand(m, -1).t()
+                    if x1.requires_grad:
+                        x1_grad[:, i] = (Delta_K * signed_diff.div(lengthscale[idx].pow(2))).sum(dim=1)  # sum over rows/x2s
+                    if x2.requires_grad:
+                        x2_grad[:, i] = -(Delta_K * signed_diff.div(lengthscale[idx].pow(2))).sum(dim=0)  # sum over columns/x1s
+
+        return x1_grad, x2_grad, lengthscale_grad
+
