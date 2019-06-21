@@ -619,14 +619,14 @@ class GAMFunction(torch.autograd.Function):
                 K_term = sq_dist.div(-2).exp_()  # one of the kernel summands.
                 Delta_K = grad_output * K_term  # reused below
                 idx = i if num_l > 1 else 0
-                lengthscale_grad[idx] += (Delta_K * sq_dist.div(lengthscale[idx])).sum()
+                lengthscale_grad[idx] += (Delta_K * sq_dist).sum().div_(lengthscale[idx])
 
                 if x1.requires_grad or x2.requires_grad:
                     signed_diff = x2[:, i].expand(n, -1) - x1[:, i].expand(m, -1).t()
                     if x1.requires_grad:
-                        x1_grad[:, i] = (Delta_K * signed_diff.div(lengthscale[idx].pow(2))).sum(dim=1)  # sum over rows/x2s
+                        x1_grad[:, i] = (Delta_K * signed_diff).sum(dim=1).div_(lengthscale[idx].pow(2))  # sum over rows/x2s
                     if x2.requires_grad:
-                        x2_grad[:, i] = -(Delta_K * signed_diff.div(lengthscale[idx].pow(2))).sum(dim=0)  # sum over columns/x1s
+                        x2_grad[:, i] = -(Delta_K * signed_diff).sum(dim=0).div_(lengthscale[idx].pow(2))  # sum over columns/x1s
 
         return x1_grad, x2_grad, lengthscale_grad
 
