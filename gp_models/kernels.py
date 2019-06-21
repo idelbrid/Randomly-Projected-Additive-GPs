@@ -618,18 +618,18 @@ class GAMFunction(torch.autograd.Function):
         # Again, use accumulators instead of expansion. Less computationally efficient, but more memory efficient.
         with torch.no_grad():
             for i in range(d):
-                signed_diff = x2_[:, i].expand(n, -1) - x1_[:, i].expand(m, -1).t()
-                sq_dist = signed_diff.pow(2)
+                sq_dist = (x2_[:, i].expand(n,-1) - x1_[:, i].view(n, 1)).pow_(2)
                 # sq_dist = torch.cdist(x1_[:, i:i + 1], x2_[:, i:i + 1]).pow_(2)
                 K_term = sq_dist.div(-2).exp_()  # one of the kernel summands.
                 Delta_K = grad_output * K_term  # reused below
                 idx = i if num_l > 1 else 0
-                lengthscale_grad[idx] += (Delta_K * sq_dist).sum().div(lengthscale[idx])
+                lengthscale_grad[idx] += sq_dist.mul_(Delta_K).sum().div(lengthscale[idx])
 
                 if x1.requires_grad or x2.requires_grad:
+                    Delta_K_diff = (x2_[:, i].expand(n, -1) - x1_[:, i].view(n, 1)).mul_(Delta_K)
                     if x1.requires_grad:
-                        x1_grad[:, i] = (Delta_K * signed_diff).sum(dim=1).div_(lengthscale[idx])  # sum over rows/x2s
+                        x1_grad[:, i] = Delta_K_diff.sum(dim=1).div_(lengthscale[idx])  # sum over rows/x2s
                     if x2.requires_grad:
-                        x2_grad[:, i] = -(Delta_K * signed_diff).sum(dim=0).div_(lengthscale[idx])  # sum over columns/x1s
+                        x2_grad[:, i] = -Delta_K_diff.sum(dim=0).div_(lengthscale[idx])  # sum over columns/x1s
         return x1_grad, x2_grad, lengthscale_grad
 
