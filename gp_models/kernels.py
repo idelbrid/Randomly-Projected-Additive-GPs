@@ -597,9 +597,10 @@ class GAMFunction(torch.autograd.Function):
             # does cdist still create a new n x m tensor in the graph? Any way to avoid allocating the memory?
             # Should just create temporary n x m tensor and add it to the accumulator.
             with torch.no_grad():
-                kernel.add_((x1_[:, i].expand(m, -1).t() - x2_[:,i].expand(n, -1)).pow_(2).div_(-2).exp_())
+                # kernel.add_((x1_[:, i].expand(m, -1).t() - x2_[:,i].expand(n, -1)).pow_(2).div_(-2).exp_())
                 # The cdist implementation is dramatically slower!
                 # kernel.add_(torch.cdist(x1_[:, i:i+1], x2_[:, i:i+1]).pow_(2).div_(-2).exp_())
+                kernel.add_((x1_[:, i].view(n, 1) - x2_[:, i].expand(n, -1)).pow_(2).div_(-2).exp_())
         return kernel
 
     @staticmethod
