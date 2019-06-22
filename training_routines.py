@@ -247,7 +247,7 @@ def create_strictly_additive_kernel(d, weighted=False, kernel_type='RBF', init_l
 
     if kernel_type == 'RBF' and memory_efficient:
         # TODO: account for kernel scaling.
-        kernel = MemoryEfficientGamKernel()
+        kernel = MemoryEfficientGamKernel(ard_num_dims=d)
         kernel.initialize(lengthscale=_sample_from_range(d, init_lengthscale_range))
         return kernel
     elif kernel_type == 'RBF':
