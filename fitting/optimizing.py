@@ -8,6 +8,7 @@ from gp_models.models import ExactGPModel
 from gpytorch.likelihoods import GaussianLikelihood
 from gpytorch.mlls import ExactMarginalLogLikelihood
 from gpytorch.kernels import AdditiveKernel
+import gc
 import copy
 
 def train_to_convergence(model, xs, ys,
@@ -49,6 +50,9 @@ def train_to_convergence(model, xs, ys,
     # instantiating optimizer
     optimizer_ = optimizer(model.parameters(), lr=lr)
 
+    gc.collect()
+    torch.cuda.empty_cache()
+    
     best_model = None
     best_loss = np.inf
     losses = np.zeros((max_iter,))
@@ -68,6 +72,7 @@ def train_to_convergence(model, xs, ys,
                 loss.backward()
                 return loss
             loss = optimizer_.step(closure).item()
+            gc.collect()
             torch.cuda.empty_cache()
             if verbose > 1:
                 print("epoch {}, iter {}, loss {}".format(i, j, loss))
