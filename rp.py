@@ -222,7 +222,7 @@ def space_equally(P, lr, niter):
     n, d = P.shape
     
     if d >= len(P):
-        vecs = np.array([[]])
+        P.requires_grad = False
         veclist = []
         for i in range(len(P)):
             v = np.random.randn(d)
@@ -235,6 +235,7 @@ def space_equally(P, lr, niter):
             veclist += [v]
         vecs = np.vstack(veclist)
         P = torch.from_numpy(vecs).to(P)
+        P.requires_grad = False
         return P, None
 
     def loss(P):
