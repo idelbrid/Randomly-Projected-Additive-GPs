@@ -382,8 +382,8 @@ if __name__ == '__main__':
               gpytorch.settings.skip_logdet_forward(args.skip_log_det_forward), \
               gpytorch.settings.memory_efficient(args.memory_efficient):
             if args.ablation:
-                jlist = [1, 2, 3, 5, 8, 13, 21, 34]
-                # jlist = [21]   #temporary
+                jlist = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377]
+                # jlist = [987]   #temporary
             else:
                 jlist = [1]
 

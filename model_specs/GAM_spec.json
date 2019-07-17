@@ -3,7 +3,8 @@
   "model_kwargs": {
     "noise_prior": true,
     "kernel_type": "RBF",
-    "weighted": true
+    "weighted": false,
+    "memory_efficient": true
   },
   "train_kwargs": {
     "verbose": false,

@@ -7,7 +7,7 @@
     "learn_proj": false,
     "prescale": true,
     "space_proj": true,
-    "batch_kernel": false,
+    "batch_kernel": true,
     "ski": true,
     "ski_options": {
       "grid_size": 1024,
