@@ -674,10 +674,11 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
     random_restarts = train_kwargs.pop('random_restarts', 1)
     init_iters = train_kwargs.pop('init_iters', 20)
     optimizer_ = _map_to_optim(train_kwargs.pop('optimizer'))
+    rr_check_conv = train_kwargs.pop('rr_check_conv', False)
 
     initial_train_kwargs = copy.copy(train_kwargs)
     initial_train_kwargs['max_iter'] = init_iters
-    initial_train_kwargs['check_conv'] = False
+    initial_train_kwargs['check_conv'] = rr_check_conv
     # initial_train_kwargs['verbose'] = 0  # don't shout about it
     best_model, best_likelihood, best_mll = None, None, None
     best_loss = np.inf
