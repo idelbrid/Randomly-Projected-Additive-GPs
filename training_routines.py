@@ -141,12 +141,17 @@ def create_additive_rp_kernel(d, J, learn_proj=False, kernel_type='RBF', space_p
             kernel = gpytorch.kernels.GridInterpolationKernel(kernel, **ski_options)
         return kernel
 
-    if batch_kernel:
-        if mem_efficient :
-            add_kernel = MemoryEfficientGamKernel()
-        else:
-            kernel = make_kernel(None)
-            add_kernel = gpytorch.kernels.AdditiveStructureKernel(kernel, J)
+    if mem_efficient:
+        if ski:
+            raise ValueError("Not implemented yet")
+        if batch_kernel:
+            raise ValueError("Impossible to have batch kernel and memory efficient GAM")
+        if kernel_type != 'RBF':
+            raise ValueError("Memory efficient GAM with alternative sub-kernels not implemented yet.")
+        add_kernel = MemoryEfficientGamKernel()
+    elif batch_kernel:
+        kernel = make_kernel(None)
+        add_kernel = gpytorch.kernels.AdditiveStructureKernel(kernel, J)
     else:
         kernels = [make_kernel(i) for i in range(J)]
         add_kernel = gpytorch.kernels.AdditiveKernel(*kernels)
@@ -236,11 +241,16 @@ def create_rp_kernel(d, k, J, ard=False, activation=None, ski=False,
 
 
 def create_strictly_additive_kernel(d, weighted=False, kernel_type='RBF', init_lengthscale_range=(1.0, 1.0),
-                                    init_mixin_range=(1.0, 1.0), ski=False, ski_options=None, X=None):
+                                    init_mixin_range=(1.0, 1.0), ski=False, ski_options=None, X=None,
+                                    memory_efficient=False):
     """Inefficient implementation of a kernel where each dimension has its own RBF subkernel."""
-    # TODO: add random initialization
 
-    if kernel_type == 'RBF':
+    if kernel_type == 'RBF' and memory_efficient:
+        # TODO: account for kernel scaling.
+        kernel = MemoryEfficientGamKernel(ard_num_dims=d)
+        kernel.initialize(lengthscale=_sample_from_range(d, init_lengthscale_range))
+        return kernel
+    elif kernel_type == 'RBF':
         kernel = gpytorch.kernels.RBFKernel
         kwargs = dict()
     elif kernel_type == 'Matern':
@@ -653,13 +663,17 @@ def train_ppr_gp(trainX, trainY, testX, testY, model_kwargs, train_kwargs, devic
 # TODO: raise a warning if somewhat important options are missing.
 # TODO: change the key word arguments to model options and rename train_kwargs to train options. This applies to basically all of the functions here.
 def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwargs, devices=('cpu',),
-                   skip_posterior_variances=False, skip_random_restart=False, evaluate_on_train=True):
+                   skip_posterior_variances=False, skip_random_restart=False, evaluate_on_train=True,
+                   output_device=None):
     """Create and train an exact GP with the given options"""
     model_kwargs = copy.copy(model_kwargs)
     train_kwargs = copy.copy(train_kwargs)
     d = trainX.shape[-1]
     devices = [torch.device(device) for device in devices]
-    output_device = devices[0]
+    if output_device is None:
+        output_device = devices[0]
+    else:
+        output_device = torch.device(output_device)
     trainX = trainX.to(output_device)
     trainY = trainY.to(output_device)
     testX = testX.to(output_device)
@@ -707,7 +721,7 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
         likelihood = best_likelihood
         mll = best_mll
     else:
-        model, likelihood = create_exact_gp(trainX, trainY, kind, **model_kwargs)
+        model, likelihood = create_exact_gp(trainX, trainY, kind, devices=devices, **model_kwargs)
         model = model.to(output_device)
         mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
 

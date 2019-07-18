@@ -6,7 +6,9 @@
     "kernel_type": "RBF",
     "learn_proj": false,
     "prescale": true,
-    "space_proj": true
+    "space_proj": true,
+    "batch_kernel": false,
+    "mem_efficient": true 
   },
   "train_kwargs": {
     "verbose": false,

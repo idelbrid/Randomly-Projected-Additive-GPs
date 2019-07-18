@@ -217,10 +217,26 @@ def riesz_s_energy(d, N, s=4):
     return X.matmul(Q).to(torch.float)
 
 
-
 def space_equally(P, lr, niter):
     P.requires_grad = True
     n, d = P.shape
+    
+    if d >= len(P):
+        P.requires_grad = False
+        veclist = []
+        for i in range(len(P)):
+            v = np.random.randn(d)
+            v = v / np.linalg.norm(v)
+            if i > 0:
+                residual = v
+                for u in veclist:
+                    residual -= v.dot(u) * u
+                v = residual / np.linalg.norm(residual)
+            veclist += [v]
+        vecs = np.vstack(veclist)
+        P = torch.from_numpy(vecs).to(P)
+        P.requires_grad = False
+        return P, None
 
     def loss(P):
         ones = torch.ones(n).unsqueeze(0)
