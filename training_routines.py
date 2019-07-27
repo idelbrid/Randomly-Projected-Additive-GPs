@@ -110,15 +110,18 @@ def create_rp_poly_kernel(d, k, J, activation=None,
 
 def create_additive_rp_kernel(d, J, learn_proj=False, kernel_type='RBF', space_proj=False, prescale=False, ard=True,
                               init_lengthscale_range=(1., 1.), ski=False, ski_options=None, proj_dist='gaussian',
-                              batch_kernel=True, mem_efficient=False):
-    projs = [rp.gen_rp(d, 1, dist=proj_dist) for _ in range(J)]
+                              batch_kernel=True, mem_efficient=False, k=1):
+    if k > 1 and (mem_efficient or batch_kernel or space_proj):
+        raise ValueError("Can't have k > 1 with memory efficient GAM kernel or a batch kernel or spaced projections.")
+
+    projs = [rp.gen_rp(d, k, dist=proj_dist) for _ in range(J)]
     # bs = [torch.zeros(1) for _ in range(J)]
     if space_proj:
         newW, _ = rp.space_equally(torch.cat(projs,dim=1).t(), lr=0.1, niter=5000)
         # newW = rp.compute_spherical_t_design(d-1, N=J)
         newW.requires_grad = False
-        projs = [newW[i:i+1, :].t() for i in range (J)]
-    proj_module = torch.nn.Linear(d, J, bias=False)
+        projs = [newW[i:i+k, :].t() for i in range(0, J*k, k)]
+    proj_module = torch.nn.Linear(d, J*k, bias=False)
     proj_module.weight.data = torch.cat(projs, dim=1).t()
     # proj_module.bias.data = torch.cat(bs, dim=0)
 
@@ -153,14 +156,14 @@ def create_additive_rp_kernel(d, J, learn_proj=False, kernel_type='RBF', space_p
         kernel = make_kernel(None)
         add_kernel = gpytorch.kernels.AdditiveStructureKernel(kernel, J)
     else:
-        kernels = [make_kernel(i) for i in range(J)]
+        kernels = [make_kernel(list(range(i, i+k))) for i in range(0, J*k, k)]
         add_kernel = gpytorch.kernels.AdditiveKernel(*kernels)
     if ard:
         if prescale:
             ard_num_dims = d
             # print('prescaling')
         else:
-            ard_num_dims = J
+            ard_num_dims = J*k
         initial_ls = _sample_from_range(ard_num_dims, init_lengthscale_range)
     else:
         ard_num_dims = None
