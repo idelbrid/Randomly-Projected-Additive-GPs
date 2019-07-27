@@ -386,12 +386,15 @@ if __name__ == '__main__':
               gpytorch.beta_features.checkpoint_kernel(args.checkpoint_kernel), \
               gpytorch.settings.skip_logdet_forward(args.skip_log_det_forward), \
               gpytorch.settings.memory_efficient(args.memory_efficient):
-            if args.k is not None:
-                abl_vars = args.k
-            elif args.J is not None:
-                abl_vars = args.J
+            if args.ablation:
+                if args.k is not None:
+                    abl_vars = args.k
+                elif args.J is not None:
+                    abl_vars = args.J
+                else:
+                    abl_vars = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377]
             else:
-                abl_vars = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377]
+                abl_vars = [-1]
 
             for abl_val in abl_vars:
                 if args.ablation:
