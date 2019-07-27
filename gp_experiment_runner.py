@@ -313,6 +313,7 @@ if __name__ == '__main__':
     parser.add_argument('--device', type=str, default='cpu', required=False, help='device string to use in PyTorch')
     parser.add_argument('--skip_posterior_variances', action='store_true')
     parser.add_argument('--ablation', action='store_true')
+    parser.add_argument('--J', type=int, nargs='+', required=False, help='Js to use in ablation to overwrite the ablation Js')
     parser.add_argument('--fold', type=int, default=0, required=False)
     parser.add_argument('--error_repeats', type=int, default=10, required=False)
     parser.add_argument('--max_cg_iterations', type=int, default=10_000, required=False)
@@ -382,7 +383,10 @@ if __name__ == '__main__':
               gpytorch.settings.skip_logdet_forward(args.skip_log_det_forward), \
               gpytorch.settings.memory_efficient(args.memory_efficient):
             if args.ablation:
-                jlist = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377]
+                if args.J is None:
+                    jlist = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377]
+                else:
+                    jlist = args.J
                 # jlist = [987]   #temporary
             else:
                 jlist = [1]
