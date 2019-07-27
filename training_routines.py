@@ -664,7 +664,7 @@ def train_ppr_gp(trainX, trainY, testX, testY, model_kwargs, train_kwargs, devic
 # TODO: change the key word arguments to model options and rename train_kwargs to train options. This applies to basically all of the functions here.
 def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwargs, devices=('cpu',),
                    skip_posterior_variances=False, skip_random_restart=False, evaluate_on_train=True,
-                   output_device=None):
+                   output_device=None, record_pred_unc=False):
     """Create and train an exact GP with the given options"""
     model_kwargs = copy.copy(model_kwargs)
     train_kwargs = copy.copy(train_kwargs)
@@ -755,6 +755,15 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
                 if evaluate_on_train:
                     model_metrics['train_nll'] = -mll(train_outputs, trainY).item()
                 model_metrics['test_nll'] = -mll(test_outputs, testY).item()
+                if record_pred_unc:
+                    distro = likelihood(test_outputs)
+                    model_metrics['test_pred_var'] = distro.variance.tolist()
+                    model_metrics['test_pred_mean'] = distro.mean.tolist()
+                    lower, upper = distro.confidence_region()
+                    frac = ((testY > lower) * (testY < upper)).to(torch.float).mean().item()
+                    model_metrics['test_pred_frac_in_cr'] = frac
+
+                    # likelihood(test_outputs).diag()
 
     model_metrics['state_dict_file'] = _save_state_dict(model)
     return model_metrics, test_outputs.mean.to('cpu'), model
