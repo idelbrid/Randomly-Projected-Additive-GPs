@@ -314,6 +314,7 @@ if __name__ == '__main__':
     parser.add_argument('--skip_posterior_variances', action='store_true')
     parser.add_argument('--ablation', action='store_true')
     parser.add_argument('--J', type=int, nargs='+', required=False, help='Js to use in ablation to overwrite the ablation Js')
+    parser.add_argument('--k', type=int, nargs='+', required=False, help='If used, do ablation on k (Dj) with given k values instead of J.')
     parser.add_argument('--fold', type=int, default=0, required=False)
     parser.add_argument('--error_repeats', type=int, default=10, required=False)
     parser.add_argument('--max_cg_iterations', type=int, default=10_000, required=False)
@@ -382,18 +383,19 @@ if __name__ == '__main__':
               gpytorch.beta_features.checkpoint_kernel(args.checkpoint_kernel), \
               gpytorch.settings.skip_logdet_forward(args.skip_log_det_forward), \
               gpytorch.settings.memory_efficient(args.memory_efficient):
-            if args.ablation:
-                if args.J is None:
-                    jlist = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377]
-                else:
-                    jlist = args.J
-                # jlist = [987]   #temporary
+            if args.k is not None:
+                abl_vars = args.k
+            elif args.J is not None:
+                abl_vars = args.J
             else:
-                jlist = [1]
+                abl_vars = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377]
 
-            for j in jlist:
+            for abl_val in abl_vars:
                 if args.ablation:
-                    options['model_kwargs']['J'] = j
+                    if args.k is None:
+                        options['model_kwargs']['J'] = abl_val
+                    else:
+                        options['model_kwargs']['k'] = abl_val  # TODO: check this is right.
 
                 if ppr:
                     results = run_experiment(training_routines.train_ppr_gp, options, dataset, split=args.split,
@@ -405,7 +407,11 @@ if __name__ == '__main__':
                                              normalize_using_train=True, chosen_fold=args.fold,
                                              error_repeats=args.error_repeats)
                 if args.ablation:
-                    results['J'] = j
+                    if args.k is None:
+                        results['J'] = abl_val
+                    else:
+                        results['k'] = abl_val
+
                 results['dataset'] = dataset
                 results['options'] = json.dumps(options)
                 results['cg_tol'] = args.cg_tol
