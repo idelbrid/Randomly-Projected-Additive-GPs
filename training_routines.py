@@ -760,8 +760,9 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
                 frac = ((testY > lower) * (testY < upper)).to(torch.float).mean().item()
                 model_metrics['test_pred_frac_in_cr'] = frac
                 if record_pred_unc:
-                    model_metrics['test_pred_var'] = distro.variance.tolist()
-                    model_metrics['test_pred_mean'] = distro.mean.tolist()
+                    model_metrics['test_pred_z_score'] = (testY - distro.mean) / distro.stddev
+                    # model_metrics['test_pred_var'] = distro.variance.tolist()
+                    # model_metrics['test_pred_mean'] = distro.mean.tolist()
 
     model_metrics['state_dict_file'] = _save_state_dict(model)
     return model_metrics, test_outputs.mean.to('cpu'), model
