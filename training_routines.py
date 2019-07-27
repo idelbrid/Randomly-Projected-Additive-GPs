@@ -755,15 +755,13 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
                 if evaluate_on_train:
                     model_metrics['train_nll'] = -mll(train_outputs, trainY).item()
                 model_metrics['test_nll'] = -mll(test_outputs, testY).item()
+                distro = likelihood(test_outputs)
+                lower, upper = distro.confidence_region()
+                frac = ((testY > lower) * (testY < upper)).to(torch.float).mean().item()
+                model_metrics['test_pred_frac_in_cr'] = frac
                 if record_pred_unc:
-                    distro = likelihood(test_outputs)
                     model_metrics['test_pred_var'] = distro.variance.tolist()
                     model_metrics['test_pred_mean'] = distro.mean.tolist()
-                    lower, upper = distro.confidence_region()
-                    frac = ((testY > lower) * (testY < upper)).to(torch.float).mean().item()
-                    model_metrics['test_pred_frac_in_cr'] = frac
-
-                    # likelihood(test_outputs).diag()
 
     model_metrics['state_dict_file'] = _save_state_dict(model)
     return model_metrics, test_outputs.mean.to('cpu'), model
