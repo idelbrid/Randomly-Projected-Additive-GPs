@@ -70,7 +70,6 @@ class GardnerMHSampler(HMSampler):
             # return proposed, prob_forward, prob_backward
 
 
-
 class ModelAverage(object):
     def __init__(self, predictions, weights):
         self.predictions = predictions
@@ -95,25 +94,43 @@ class ModelAverage(object):
 
         return torch.log(prob)
 
-    def sample(self):
-        idx = torch.distributions.Categorical(logits=torch.tensor(self.weights)).sample().item()
-        return self.predictions[idx].sample()
+    def sample(self, n=None):
+        if n is None:
+            idx = torch.distributions.Categorical(logits=torch.tensor(self.weights)).sample().item()
+            return self.predictions[idx].sample()
+        else:
+            samples = []
+            for _ in range(n):
+                samples.append(self.sample())  # perform sequential sampling, not super efficient.
+            return torch.stack(samples)
+
+    def sample_mean(self, n_samples=100):
+        return self.sample(n=n_samples).mean(dim=0)
 
 
 class CGPSampler(object):
-    def __init__(self, X, y, proj_dist='gaussian'):
+    def __init__(self, X, y, proj_dist='gaussian', num_ls_samples=20, min_k=None, max_k=None, num_samples=None):
         n, d = X.shape
         self.X = X
         self.y = y
         self.n = n
         self.d = d
         self.proj_dist = proj_dist
-        self.num_ls_samples = 20
+        self.num_ls_samples = num_ls_samples
         self.ls_prior = gpytorch.priors.GammaPrior(1.6, 0.5)
         self.kernel = gpytorch.kernels.RBFKernel()
-        self.min_k = np.ceil(2 * np.log(d))
-        self.max_k = min(n, d)
-        self.num_samples = self.max_k - self.min_k  # can be overwritten...
+        if min_k is None:
+            self.min_k = np.ceil(2 * np.log(d))
+        else:
+            self.min_k = min_k
+        if max_k is None:
+            self.max_k = min(n, d)
+        else:
+            self.max_k = max_k
+        if num_samples is None:
+            self.num_samples = self.max_k - self.min_k  # can be overwritten...
+        else:
+            self.num_samples = num_samples
         self._dmax = None
         self._dmin = None
 

@@ -341,7 +341,6 @@ if __name__ == '__main__':
     options['devices'] = devices
     options['skip_posterior_variances'] = args.skip_posterior_variances
     options['evaluate_on_train'] = not args.skip_evaluate_on_train
-    options['skip_random_restart'] = args.skip_random_restart
     options['record_pred_unc'] = args.record_pred_unc
 
     if options['record_pred_unc'] and options['skip_posterior_variances']:
@@ -370,9 +369,17 @@ if __name__ == '__main__':
     else:
         datasets = args.datasets
 
-    ppr = options['kind'] == 'ppr_gp'
-    if ppr:
+    # Disambiguate overloaded "kind" key word option
+    ppr, cgp = False, False
+    if options['kind'] == 'ppr_gp':
         options.pop('kind')
+        ppr = True
+    elif options['kind'] == 'cgp':
+        options.pop('kind')
+        cgp = True
+    else:
+        # We're doing an exact GP
+        options['skip_random_restart'] = args.skip_random_restart
 
     df = pd.DataFrame()
     for dataset in datasets:
@@ -405,6 +412,10 @@ if __name__ == '__main__':
 
                 if ppr:
                     results = run_experiment(training_routines.train_ppr_gp, options, dataset, split=args.split,
+                                             cv=args.cv, repeats=args.repeats, normalize_using_train=True,
+                                             chosen_fold=args.fold, error_repeats=args.error_repeats)
+                elif cgp:
+                    results = run_experiment(training_routines.train_compressed_gp, options, dataset, split=args.split,
                                              cv=args.cv, repeats=args.repeats, normalize_using_train=True,
                                              chosen_fold=args.fold, error_repeats=args.error_repeats)
                 else:

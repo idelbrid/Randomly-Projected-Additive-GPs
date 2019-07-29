@@ -770,3 +770,45 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
     model_metrics['state_dict_file'] = _save_state_dict(model)
     return model_metrics, test_outputs.mean.to('cpu'), model
 
+
+def train_compressed_gp(trainX, trainY, testX, testY, model_kwargs, train_kwargs, devices=('cpu',),
+                        skip_posterior_variances=False, evaluate_on_train=True,
+                        output_device=None, record_pred_unc=False):
+    from fitting.sampling import CGPSampler
+    d = trainX.shape[-1]
+    devices = [torch.device(device) for device in devices]
+    if output_device is None:
+        output_device = devices[0]
+    else:
+        output_device = torch.device(output_device)
+    trainX = trainX.to(output_device)
+    trainY = trainY.to(output_device)
+    testX = testX.to(output_device)
+    testY = testY.to(output_device)
+
+    # Pack all of the kwargs into one object... maybe not the best idea.
+    model = CGPSampler(trainX, trainY, **model_kwargs, **train_kwargs)  # TODO: implement GPU support.
+
+    model_metrics = dict()
+    with torch.no_grad():
+        with gpytorch.settings.skip_posterior_variances(skip_posterior_variances):
+            # pred = model.pred(testX)
+            #
+            # -pred.log_prob(testY).item()
+
+            if evaluate_on_train:
+                train_outputs = model.pred(trainX)
+                model_metrics['train_mse'] = mean_squared_error(train_outputs.mean(), trainY)
+
+            test_outputs = model.pred(testX)
+            if not skip_posterior_variances:
+                if evaluate_on_train:
+                    model_metrics['train_nll'] = -train_outputs.log_prob(trainY).item()
+                model_metrics['test_nll'] = -test_outputs.log_prob(testY).item()
+                # TODO: implement confidence region method for model average object.
+            model_metrics['sampled_mean_mse'] = mean_squared_error(test_outputs.sample_mean(), testY)
+            model_metrics['normal_mean_mse'] = mean_squared_error(test_outputs.mean(), testY)
+
+    # model_metrics['state_dict_file'] = _save_state_dict(model)
+    return model_metrics, test_outputs.mean().to('cpu'), model
+
