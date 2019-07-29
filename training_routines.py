@@ -795,21 +795,19 @@ def train_compressed_gp(trainX, trainY, testX, testY, model_kwargs, train_kwargs
 
     model_metrics = dict()
     with torch.no_grad():
-        with gpytorch.settings.skip_posterior_variances(skip_posterior_variances):
 
+        if evaluate_on_train:
+            train_outputs = model.pred(trainX)
+            model_metrics['train_mse'] = mean_squared_error(train_outputs.mean(), trainY)
+        
+        test_outputs = model.pred(testX)
+        if not skip_posterior_variances:
             if evaluate_on_train:
-                train_outputs = model.pred(trainX)
-                model_metrics['train_mse'] = mean_squared_error(train_outputs.mean(), trainY)
-
-            test_outputs = model.pred(testX)
-            if not skip_posterior_variances:
-                if evaluate_on_train:
-                    model_metrics['train_nll'] = -train_outputs.log_prob(trainY).item()
-                model_metrics['test_nll'] = -test_outputs.log_prob(testY).item()
-                # TODO: implement confidence region method for model average object.
-            model_metrics['sampled_mean_mse'] = mean_squared_error(test_outputs.sample_mean(), testY)
-            with gpytorch.settings.skip_posterior_variances(False):
-                model_metrics['normal_mean_mse'] = mean_squared_error(test_outputs.mean(), testY)
+                model_metrics['train_nll'] = -train_outputs.log_prob(trainY).item()
+            model_metrics['test_nll'] = -test_outputs.log_prob(testY).item()
+            # TODO: implement confidence region method for model average object.
+        model_metrics['sampled_mean_mse'] = mean_squared_error(test_outputs.sample_mean(), testY)
+        model_metrics['normal_mean_mse'] = mean_squared_error(test_outputs.mean(), testY)
 
     # model_metrics['state_dict_file'] = _save_state_dict(model)
     return model_metrics, test_outputs.mean().to('cpu'), model
