@@ -184,7 +184,7 @@ class TestPolyProjectionKernel(TestCase):
         param_dict = dict()
         for name, param in kernel.named_parameters():
             param_dict[name] = param
-        self.assertEqual(len(param_dict), self.J*(self.k+1) + 2)  # outputscale, lengthscales for each j, plus W, and b.
+        self.assertEqual(len(param_dict), self.J*(self.k+1) + 2)  # outputscale, lengthscales for each abl_val, plus W, and b.
         self.assertTrue(kernel.projection_module.bias.requires_grad)
         self.assertTrue(kernel.projection_module.weight.requires_grad)
 
