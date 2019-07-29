@@ -778,8 +778,8 @@ def train_compressed_gp(trainX, trainY, testX, testY, model_kwargs, train_kwargs
     d = trainX.shape[-1]
     if len(devices) > 1:
         raise ValueError("CGP not implemented for multi GPUs (yet?)")
-    if devices[0] != 'cpu':
-        torch.cuda.set_device(devices[0])
+    if str(devices[0]) != 'cpu':
+        torch.cuda.set_device(torch.device(devices[0]))
     devices = [torch.device(device) for device in devices]
     if output_device is None:
         output_device = devices[0]
