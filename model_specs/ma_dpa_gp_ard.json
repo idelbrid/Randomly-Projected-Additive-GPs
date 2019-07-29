@@ -1,0 +1,24 @@
+{
+  "kind": "model_average",
+  "varying_params": {
+    "J": [1, 2, 3, 5, 8, 13, 21, 34, 55, 89]
+  },
+  "base_model_kwargs": {
+    "kind": "additive_rp",
+    "model_kwargs": {
+      "J": 20,
+      "noise_prior": true,
+      "kernel_type": "RBF",
+      "learn_proj": false,
+      "prescale": true
+    },
+    "train_kwargs": {
+      "verbose": false,
+      "optimizer": "adam",
+      "max_iter": 300,
+      "lr": 0.1,
+      "patience": 15,
+      "smooth": true
+    }
+  }
+}

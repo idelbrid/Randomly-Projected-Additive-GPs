@@ -338,14 +338,6 @@ if __name__ == '__main__':
 
     print('Registered data base path {}'.format(data_base_path))
 
-    options['devices'] = devices
-    options['skip_posterior_variances'] = args.skip_posterior_variances
-    options['evaluate_on_train'] = not args.skip_evaluate_on_train
-    options['record_pred_unc'] = args.record_pred_unc
-
-    if options['record_pred_unc'] and options['skip_posterior_variances']:
-        raise ValueError("Can't record predictive uncertainty while skipping posterior variances.")
-
     try:
         args.datasets[0] = int(args.datasets[0])
     except Exception:
@@ -370,16 +362,31 @@ if __name__ == '__main__':
         datasets = args.datasets
 
     # Disambiguate overloaded "kind" key word option
-    ppr, cgp = False, False
+    ppr, cgp, ma = False, False, False
     if options['kind'] == 'ppr_gp':
         options.pop('kind')
         ppr = True
     elif options['kind'] == 'cgp':
         options.pop('kind')
         cgp = True
+    elif options['kind'] == 'model_average':
+        options.pop('kind')
+        ma_args = options.pop('varying_params')
+        options = options['base_model_kwargs']
+        options['model_kwargs']['varying_params'] = ma_args
+        ma = True
     else:
         # We're doing an exact GP
         options['skip_random_restart'] = args.skip_random_restart
+
+    options['devices'] = devices
+    options['skip_posterior_variances'] = args.skip_posterior_variances
+    options['evaluate_on_train'] = not args.skip_evaluate_on_train
+    options['record_pred_unc'] = args.record_pred_unc
+
+    if options['record_pred_unc'] and options['skip_posterior_variances']:
+        raise ValueError("Can't record predictive uncertainty while skipping posterior variances.")
+
 
     df = pd.DataFrame()
     for dataset in datasets:
@@ -411,18 +418,18 @@ if __name__ == '__main__':
                         options['model_kwargs']['k'] = abl_val  # TODO: check this is right.
 
                 if ppr:
-                    results = run_experiment(training_routines.train_ppr_gp, options, dataset, split=args.split,
-                                             cv=args.cv, repeats=args.repeats, normalize_using_train=True,
-                                             chosen_fold=args.fold, error_repeats=args.error_repeats)
+                    routine = training_routines.train_ppr_gp
                 elif cgp:
-                    results = run_experiment(training_routines.train_compressed_gp, options, dataset, split=args.split,
-                                             cv=args.cv, repeats=args.repeats, normalize_using_train=True,
-                                             chosen_fold=args.fold, error_repeats=args.error_repeats)
+                    routine = training_routines.train_compressed_gp
+                elif ma:
+                    routine = training_routines.train_exact_gp_model_average
                 else:
-                    results = run_experiment(training_routines.train_exact_gp, options,
-                                   dataset, split=args.split, cv=args.cv, repeats=args.repeats,
-                                             normalize_using_train=True, chosen_fold=args.fold,
-                                             error_repeats=args.error_repeats)
+                    routine = training_routines.train_exact_gp
+
+                results = run_experiment(routine, options,
+                               dataset, split=args.split, cv=args.cv, repeats=args.repeats,
+                                         normalize_using_train=True, chosen_fold=args.fold,
+                                         error_repeats=args.error_repeats)
                 if args.ablation:
                     if args.k is None:
                         results['J'] = abl_val

@@ -813,7 +813,34 @@ def train_compressed_gp(trainX, trainY, testX, testY, model_kwargs, train_kwargs
     return model_metrics, test_outputs.mean().to('cpu'), model
 
 
-def train_gp_model_average(trainX, trainY, testX, testY, model_kwargs, train_kwargs, devices=('cpu',),
-                           skip_posterior_variances=False, evaluate_on_train=True,
-                           output_device=None, record_pred_unc=False):
-    pass
+def train_exact_gp_model_average(trainX, trainY, testX, testY, kind, model_kwargs, train_kwargs,
+                                 devices=('cpu',), skip_posterior_variances=False, evaluate_on_train=True,
+                                 output_device=None, record_pred_unc=False):
+    from fitting.sampling import ModelAverage
+    model_kwargs = copy.deepcopy(model_kwargs)
+    train_kwargs = copy.deepcopy(train_kwargs)
+
+    predictions, log_mlls = [], []
+    varying_params = model_kwargs.pop('varying_params')
+    k = list(varying_params.keys())[0]
+    for i in range(len(varying_params[k])):
+        for k, v in varying_params.items():
+            model_kwargs[k] = v[i]
+        metrics, pred_mean, model = train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwargs, devices=devices,
+                       skip_posterior_variances=skip_posterior_variances, skip_random_restart=True,
+                       evaluate_on_train=False)
+        log_mlls.append(-metrics['prior_train_nmll'])
+        model.eval()
+        predictions.append(model(testX))
+
+    test_outputs = ModelAverage(predictions, log_mlls)
+    model_metrics = dict()
+    with torch.no_grad():
+        if not skip_posterior_variances:
+            model_metrics['test_nll'] = -test_outputs.log_prob(testY).item()
+            # TODO: implement confidence region method for model average object.
+        model_metrics['sampled_mean_mse'] = mean_squared_error(test_outputs.sample_mean(), testY)
+        model_metrics['normal_mean_mse'] = mean_squared_error(test_outputs.mean(), testY)
+
+    # model_metrics['state_dict_file'] = _save_state_dict(model)
+    return model_metrics, test_outputs.mean().to('cpu'), None
