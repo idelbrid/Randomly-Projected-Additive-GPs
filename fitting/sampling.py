@@ -111,6 +111,7 @@ class ModelAverage(object):
 class CGPSampler(object):
     def __init__(self, X, y, proj_dist='gaussian', num_ls_samples=20, min_k=None, max_k=None, num_samples=None):
         n, d = X.shape
+        self.device = X.device
         self.X = X
         self.y = y
         self.n = n
@@ -118,7 +119,7 @@ class CGPSampler(object):
         self.proj_dist = proj_dist
         self.num_ls_samples = num_ls_samples
         self.ls_prior = gpytorch.priors.GammaPrior(1.6, 0.5)
-        self.kernel = gpytorch.kernels.RBFKernel()
+        self.kernel = gpytorch.kernels.RBFKernel().to(device=self.device)
         if min_k is None:
             self.min_k = np.ceil(2 * np.log(d))
         else:
@@ -158,7 +159,7 @@ class CGPSampler(object):
         :return:
         """
         from rp import gen_rp
-        return gen_rp(self.d, k, self.proj_dist)
+        return gen_rp(self.d, k, self.proj_dist).to(self.device)
 
     def _sample_lengthscale(self, projected_X):
         """
@@ -173,14 +174,15 @@ class CGPSampler(object):
         mls = []
         for i in range(self.num_ls_samples):
             l = torch.rand(1)*(self.dmax - self.dmin) + self.dmin  # sample lengthscale uniformly
+            l = l.to(self.device)
             ls.append(l)
 
             # Compute marginal likelihood of data given lengthscale
             like = gpytorch.likelihoods.GaussianLikelihood()
             like.initialize(noise=1.)
             self.kernel.initialize(lengthscale=l)
-            model = ExactGPModel(projected_X, self.y, like, self.kernel)
-            mll = gpytorch.mlls.ExactMarginalLogLikelihood(like, model)
+            model = ExactGPModel(projected_X, self.y, like, self.kernel).to(self.device)
+            mll = gpytorch.mlls.ExactMarginalLogLikelihood(like, model).to(self.device)
             mll.train()
             model.train()
             log_ml = mll(model(projected_X), self.y).item()
@@ -188,7 +190,7 @@ class CGPSampler(object):
             # consts = self.n/2 * np.log(2) + torch.lgamma(torch.tensor(self.n/2, dtype=torch.double)).to(torch.float)
             consts = 0  # don't actually need to compute the constants, since we are only ever taking a weighted avg
             w = (
-                torch.tensor(log_ml) +
+                torch.tensor(log_ml,device=self.device) +
                 self.ls_prior.log_prob(l) +
                 consts
             )
@@ -222,7 +224,7 @@ class CGPSampler(object):
             like = gpytorch.likelihoods.GaussianLikelihood()
             like.initialize(noise=1.)
             self.kernel.initialize(lengthscale=lam)
-            model = ExactGPModel(proj_X, self.y, like, self.kernel)
+            model = ExactGPModel(proj_X, self.y, like, self.kernel).to(self.device)
             model.eval()
             pred = model(proj_test_X)  # TODO: this is Gaussian, not t distributed.
             preds.append(pred)
