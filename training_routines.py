@@ -776,6 +776,10 @@ def train_compressed_gp(trainX, trainY, testX, testY, model_kwargs, train_kwargs
                         output_device=None, record_pred_unc=False):
     from fitting.sampling import CGPSampler
     d = trainX.shape[-1]
+    if len(devices) > 1:
+        raise ValueError("CGP not implemented for multi GPUs (yet?)")
+    if devices[0] != 'cpu':
+        torch.cuda.set_device(devices[0])
     devices = [torch.device(device) for device in devices]
     if output_device is None:
         output_device = devices[0]
@@ -787,14 +791,11 @@ def train_compressed_gp(trainX, trainY, testX, testY, model_kwargs, train_kwargs
     testY = testY.to(output_device)
 
     # Pack all of the kwargs into one object... maybe not the best idea.
-    model = CGPSampler(trainX, trainY, **model_kwargs, **train_kwargs)  # TODO: implement GPU support.
+    model = CGPSampler(trainX, trainY, **model_kwargs, **train_kwargs)
 
     model_metrics = dict()
     with torch.no_grad():
         with gpytorch.settings.skip_posterior_variances(skip_posterior_variances):
-            # pred = model.pred(testX)
-            #
-            # -pred.log_prob(testY).item()
 
             if evaluate_on_train:
                 train_outputs = model.pred(trainX)
