@@ -68,7 +68,7 @@ def create_deep_rp_poly_kernel(d, degrees, projection_architecture, projection_k
                                                  learn_proj=learn_proj,
                                                  weighted=weighted, ski=ski, ski_options=ski_options, X=X,**kwargs)
 # =======
-#     kernel = GeneralizedPolynomialProjectionKernel(J, k, d, kernel, module,
+#     kernel = GeneralizedPolynomialProjectionKernel(J, k, num_dims, kernel, module,
 #                                                    learn_proj=learn_proj,
 #                                                    weighted=weighted, ski=ski, ski_options=ski_options, X=X,
 # >>>>>>> 50d9d6c6c2338a0f712858232ea93dd4f3107921
@@ -88,7 +88,7 @@ def create_rp_poly_kernel(d, k, J, activation=None,
     if space_proj:
         # TODO: If k>1, could implement equal spacing for each set of projs
         newW, _ = rp.space_equally(torch.cat(projs,dim=1).t(), lr=0.1, niter=5000)
-        # newW = rp.compute_spherical_t_design(d-1, t=4, N=J)
+        # newW = rp.compute_spherical_t_design(num_dims-1, t=4, N=J)
         newW.requires_grad = False
         projs = [newW[i:i+1, :].t() for i in range (J)]
 
@@ -118,7 +118,7 @@ def create_additive_rp_kernel(d, J, learn_proj=False, kernel_type='RBF', space_p
     # bs = [torch.zeros(1) for _ in range(J)]
     if space_proj:
         newW, _ = rp.space_equally(torch.cat(projs,dim=1).t(), lr=0.1, niter=5000)
-        # newW = rp.compute_spherical_t_design(d-1, N=J)
+        # newW = rp.compute_spherical_t_design(num_dims-1, N=J)
         newW.requires_grad = False
         projs = [newW[i:i+k, :].t() for i in range(0, J*k, k)]
     proj_module = torch.nn.Linear(d, J*k, bias=False)
@@ -202,14 +202,14 @@ def create_general_rp_poly_kernel(d, degrees, learn_proj=False, weighted=False, 
 def create_rp_kernel(d, k, J, ard=False, activation=None, ski=False,
                      grid_size=None, learn_proj=False, weighted=False, kernel_type='RBF'):
     """Construct a RP kernel object (though not random if learn_proj is true)
-    d is dimensionality of data
+    num_dims is dimensionality of data
     k is the dimensionality of the projections
     J is the number of independent RP kernels in a RPKernel object
     ard set to True if each RBF kernel should use ARD
     activation None if no nonlinearity applied after projection. Otherwise, the name of the nonlinearity
     ski set to True computes each sub-kernel by scalable kernel interpolation
     grid_size ignored if ski is False. Otherwise, the size of the grid in each dimension
-        * Note that if we project into k dimensions, we have grid_size^d grid points
+        * Note that if we project into k dimensions, we have grid_size^num_dims grid points
     learn_proj set to True to learn projection matrix elements
     weighted set to True to learn the linear combination of kernels
     """
@@ -226,7 +226,7 @@ def create_rp_kernel(d, k, J, ard=False, activation=None, ski=False,
     projs = []
     bs = [torch.zeros(k) for _ in range(J)]
     for j in range(J):
-        projs.append(rp.gen_rp(d, k))  # d, k just output dimensions of matrix
+        projs.append(rp.gen_rp(d, k))  # num_dims, k just output dimensions of matrix
         if kernel_type == 'RBF':
             kernel = gpytorch.kernels.RBFKernel(ard_num_dims)
         elif kernel_type == 'Matern':
@@ -284,7 +284,7 @@ def create_additive_kernel(d, groups, weighted=False, kernel_type='RBF', init_le
 
 
 def create_duvenaud_additive_kernel(d, max_degree):
-    kernel = DuvenaudAdditiveKernel(d, max_degree)
+    kernel = DuvenaudAdditiveKernel(RBFKernel(ard_num_dims=d), d, max_degree)
     return kernel
 
 
@@ -684,7 +684,7 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
 
     # replace with value from dataset for convenience
     for k, v in list(model_kwargs.items()):
-        if isinstance(v, str) and v == 'd':
+        if isinstance(v, str) and v == 'num_dims':
             model_kwargs[k] = d
 
     # Change some options just for initial training with random restarts.
