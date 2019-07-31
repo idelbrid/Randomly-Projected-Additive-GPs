@@ -820,6 +820,20 @@ def train_exact_gp_model_average(trainX, trainY, testX, testY, kind, model_kwarg
     model_kwargs = copy.deepcopy(model_kwargs)
     train_kwargs = copy.deepcopy(train_kwargs)
 
+    if len(devices) > 1:
+        raise ValueError("CGP not implemented for multi GPUs (yet?)")
+    if str(devices[0]) != 'cpu':
+        torch.cuda.set_device(torch.device(devices[0]))
+    devices = [torch.device(device) for device in devices]
+    if output_device is None:
+        output_device = devices[0]
+    else:
+        output_device = torch.device(output_device)
+    trainX = trainX.to(output_device)
+    trainY = trainY.to(output_device)
+    testX = testX.to(output_device)
+    testY = testY.to(output_device)
+
     predictions, log_mlls = [], []
     varying_params = model_kwargs.pop('varying_params')
     k = list(varying_params.keys())[0]
