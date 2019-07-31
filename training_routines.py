@@ -110,15 +110,18 @@ def create_rp_poly_kernel(d, k, J, activation=None,
 
 def create_additive_rp_kernel(d, J, learn_proj=False, kernel_type='RBF', space_proj=False, prescale=False, ard=True,
                               init_lengthscale_range=(1., 1.), ski=False, ski_options=None, proj_dist='gaussian',
-                              batch_kernel=True, mem_efficient=False):
-    projs = [rp.gen_rp(d, 1, dist=proj_dist) for _ in range(J)]
+                              batch_kernel=True, mem_efficient=False, k=1):
+    if k > 1 and (mem_efficient or batch_kernel or space_proj):
+        raise ValueError("Can't have k > 1 with memory efficient GAM kernel or a batch kernel or spaced projections.")
+
+    projs = [rp.gen_rp(d, k, dist=proj_dist) for _ in range(J)]
     # bs = [torch.zeros(1) for _ in range(J)]
     if space_proj:
         newW, _ = rp.space_equally(torch.cat(projs,dim=1).t(), lr=0.1, niter=5000)
         # newW = rp.compute_spherical_t_design(d-1, N=J)
         newW.requires_grad = False
-        projs = [newW[i:i+1, :].t() for i in range (J)]
-    proj_module = torch.nn.Linear(d, J, bias=False)
+        projs = [newW[i:i+k, :].t() for i in range(0, J*k, k)]
+    proj_module = torch.nn.Linear(d, J*k, bias=False)
     proj_module.weight.data = torch.cat(projs, dim=1).t()
     # proj_module.bias.data = torch.cat(bs, dim=0)
 
@@ -153,14 +156,14 @@ def create_additive_rp_kernel(d, J, learn_proj=False, kernel_type='RBF', space_p
         kernel = make_kernel(None)
         add_kernel = gpytorch.kernels.AdditiveStructureKernel(kernel, J)
     else:
-        kernels = [make_kernel(i) for i in range(J)]
+        kernels = [make_kernel(list(range(i, i+k))) for i in range(0, J*k, k)]
         add_kernel = gpytorch.kernels.AdditiveKernel(*kernels)
     if ard:
         if prescale:
             ard_num_dims = d
             # print('prescaling')
         else:
-            ard_num_dims = J
+            ard_num_dims = J*k
         initial_ls = _sample_from_range(ard_num_dims, init_lengthscale_range)
     else:
         ard_num_dims = None
@@ -664,7 +667,7 @@ def train_ppr_gp(trainX, trainY, testX, testY, model_kwargs, train_kwargs, devic
 # TODO: change the key word arguments to model options and rename train_kwargs to train options. This applies to basically all of the functions here.
 def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwargs, devices=('cpu',),
                    skip_posterior_variances=False, skip_random_restart=False, evaluate_on_train=True,
-                   output_device=None):
+                   output_device=None, record_pred_unc=False):
     """Create and train an exact GP with the given options"""
     model_kwargs = copy.copy(model_kwargs)
     train_kwargs = copy.copy(train_kwargs)
@@ -756,7 +759,103 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
                 if evaluate_on_train:
                     model_metrics['train_nll'] = -mll(train_outputs, trainY).item()
                 model_metrics['test_nll'] = -mll(test_outputs, testY).item()
+                distro = likelihood(test_outputs)
+                lower, upper = distro.confidence_region()
+                frac = ((testY > lower) * (testY < upper)).to(torch.float).mean().item()
+                model_metrics['test_pred_frac_in_cr'] = frac
+                if record_pred_unc:
+                    model_metrics['test_pred_z_score'] = (testY - distro.mean) / distro.stddev
+                    # model_metrics['test_pred_var'] = distro.variance.tolist()
+                    # model_metrics['test_pred_mean'] = distro.mean.tolist()
 
     model_metrics['state_dict_file'] = _save_state_dict(model)
     return model_metrics, test_outputs.mean.to('cpu'), model
 
+
+def train_compressed_gp(trainX, trainY, testX, testY, model_kwargs, train_kwargs, devices=('cpu',),
+                        skip_posterior_variances=False, evaluate_on_train=True,
+                        output_device=None, record_pred_unc=False):
+    from fitting.sampling import CGPSampler
+    d = trainX.shape[-1]
+    if len(devices) > 1:
+        raise ValueError("CGP not implemented for multi GPUs (yet?)")
+    if str(devices[0]) != 'cpu':
+        torch.cuda.set_device(torch.device(devices[0]))
+    devices = [torch.device(device) for device in devices]
+    if output_device is None:
+        output_device = devices[0]
+    else:
+        output_device = torch.device(output_device)
+    trainX = trainX.to(output_device)
+    trainY = trainY.to(output_device)
+    testX = testX.to(output_device)
+    testY = testY.to(output_device)
+
+    # Pack all of the kwargs into one object... maybe not the best idea.
+    model = CGPSampler(trainX, trainY, **model_kwargs, **train_kwargs)
+
+    model_metrics = dict()
+    with torch.no_grad():
+
+        if evaluate_on_train:
+            train_outputs = model.pred(trainX)
+            model_metrics['train_mse'] = mean_squared_error(train_outputs.mean(), trainY)
+        
+        test_outputs = model.pred(testX)
+        if not skip_posterior_variances:
+            if evaluate_on_train:
+                model_metrics['train_nll'] = -train_outputs.log_prob(trainY).item()
+            model_metrics['test_nll'] = -test_outputs.log_prob(testY).item()
+            # TODO: implement confidence region method for model average object.
+        model_metrics['sampled_mean_mse'] = mean_squared_error(test_outputs.sample_mean(), testY)
+        model_metrics['normal_mean_mse'] = mean_squared_error(test_outputs.mean(), testY)
+
+    # model_metrics['state_dict_file'] = _save_state_dict(model)
+    return model_metrics, test_outputs.mean().to('cpu'), model
+
+
+def train_exact_gp_model_average(trainX, trainY, testX, testY, kind, model_kwargs, train_kwargs,
+                                 devices=('cpu',), skip_posterior_variances=False, evaluate_on_train=True,
+                                 output_device=None, record_pred_unc=False):
+    from fitting.sampling import ModelAverage
+    model_kwargs = copy.deepcopy(model_kwargs)
+    train_kwargs = copy.deepcopy(train_kwargs)
+
+    if len(devices) > 1:
+        raise ValueError("CGP not implemented for multi GPUs (yet?)")
+    if str(devices[0]) != 'cpu':
+        torch.cuda.set_device(torch.device(devices[0]))
+    devices = [torch.device(device) for device in devices]
+    if output_device is None:
+        output_device = devices[0]
+    else:
+        output_device = torch.device(output_device)
+    trainX = trainX.to(output_device)
+    trainY = trainY.to(output_device)
+    testX = testX.to(output_device)
+    testY = testY.to(output_device)
+
+    predictions, log_mlls = [], []
+    varying_params = model_kwargs.pop('varying_params')
+    k = list(varying_params.keys())[0]
+    for i in range(len(varying_params[k])):
+        for k, v in varying_params.items():
+            model_kwargs[k] = v[i]
+        metrics, pred_mean, model = train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwargs, devices=devices,
+                       skip_posterior_variances=skip_posterior_variances, skip_random_restart=True,
+                       evaluate_on_train=False)
+        log_mlls.append(-metrics['prior_train_nmll'])
+        model.eval()
+        predictions.append(model(testX))
+
+    test_outputs = ModelAverage(predictions, log_mlls)
+    model_metrics = dict()
+    with torch.no_grad():
+        if not skip_posterior_variances:
+            model_metrics['test_nll'] = -test_outputs.log_prob(testY).item()
+            # TODO: implement confidence region method for model average object.
+        model_metrics['sampled_mean_mse'] = mean_squared_error(test_outputs.sample_mean(), testY)
+        model_metrics['normal_mean_mse'] = mean_squared_error(test_outputs.mean(), testY)
+
+    # model_metrics['state_dict_file'] = _save_state_dict(model)
+    return model_metrics, test_outputs.mean().to('cpu'), None

@@ -1,4 +1,5 @@
 import gpytorch
+import torch
 import numpy as np
 import gp_models
 
@@ -49,3 +50,13 @@ def format_for_str(num_or_list, decimals=3):
         return np.round(num_or_list, decimals)
     else:
         return ''
+
+
+@torch.jit.script
+def my_cdist(x1, x2):
+    """from Jacob Gardner here https://github.com/pytorch/pytorch/issues/15253"""
+    x1_norm = x1.pow(2).sum(dim=-1, keepdim=True)
+    x2_norm = x2.pow(2).sum(dim=-1, keepdim=True)
+    res = torch.addmm(x2_norm.transpose(-2, -1), x1, x2.transpose(-2, -1), alpha=-2).add_(x1_norm)
+    res = res.clamp_min_(1e-30).sqrt_()
+    return res
