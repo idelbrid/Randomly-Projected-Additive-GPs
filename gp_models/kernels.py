@@ -377,10 +377,11 @@ class DuvenaudAdditiveKernel(gpytorch.kernels.Kernel):
         self.d = d
         if max_degree is None:
             self.max_degree = d
+        elif max_degree > d:  # force cap on max_degree (silently)
+            self.max_degree = d
         else:
             self.max_degree = max_degree
-        if max_degree > d:
-            self.max_degree = d
+
         super(DuvenaudAdditiveKernel, self).__init__(has_lengthscale=True,
                                                      active_dims=active_dims,
                                                      lengthscale_prior=None,
@@ -418,31 +419,40 @@ class DuvenaudAdditiveKernel(gpytorch.kernels.Kernel):
     def forward(self, x1, x2, diag=False, last_dim_is_batch=False, **params):
         x1_ = x1.div(self.lengthscale)  # account for lengthscales first
         x2_ = x2.div(self.lengthscale)
+
+        # kern_values is just the order-1 terms
+        # kern_values = D x n x n
         kern_values = self.covar_dist(x1_, x2_, diag=diag, last_dim_is_batch=True,
                                       square_dist=True,
                                       dist_postprocess_func=postprocess_rbf,
                                       postprocess=True)
-
-        # kern_values = D x n x n
         # last dim is batch, which gets moved up to pos. 1
         # compute scale-less values for each degree
+
         kvals = torch.range(1, self.max_degree, device=kern_values.device).reshape(-1, 1, 1, 1)
-        # kvals = 1 x D (indexes only)
+        # kvals = 1 x R (these are indexes only)
+
         # e_n = torch.ones(self.max_degree+1, *kern_values.shape[1:], device=kern_values.device)  # includes 0
-        e_n = torch.zeros(self.max_degree+1, *kern_values.shape[1:], device=kern_values.device)
+        # e_n: elementary symmetric polynomial of degree n (e.g. z1 z2 + z1 z3 + z2 z3)
+        # e_n is R x n x n, and the array is properly 0 indexed.
+        e_n = torch.empty(self.max_degree+1, *kern_values.shape[1:], device=kern_values.device)
         e_n[0, :, :] = 1.0
-        s_k = kern_values.pow(kvals).sum(dim=1)  # should have max_degree # of terms
-        # e_n = R x n x n
-        # s_k = R x n x n
+
+        # power sums s_k (e.g. sum_i^d z_i^k
+        # s_k is R x n x n
+        s_k = kern_values.pow(kvals).sum(dim=1)
+
+        # just the constant -1
         m1 = torch.tensor([-1], dtype=torch.float, device=kern_values.device)
-        for deg in range(1, self.max_degree+1):
-            # term = torch.zeros(*e_n.shape[1:], device=kern_values.device)  # 1 x n x n
-            ks = torch.arange(1, deg+1, device=kern_values.device, dtype=torch.float).reshape(-1, 1, 1)
-            kslong = torch.arange(1, deg + 1, device=kern_values.device, dtype=torch.long)
-            e_n[deg] = (m1.pow(ks-1) * e_n.index_select(0, deg-kslong) * s_k.index_select(0, kslong-1)).sum(dim=0)
-            # for k in range(1, deg+1):
-            #     e_n[deg].add_((-1)**(k-1) * e_n[deg - k] * s_k[k-1])
-            # e_n[deg].div_(deg)
+
+        for deg in range(1, self.max_degree+1):  # deg goes from 1 to R (it's 1-indexed!)
+            # we avg over k [1, ..., deg] (-1)^(k-1)e_{deg-k} s_{k}
+            ks = torch.arange(1, deg+1, device=kern_values.device, dtype=torch.float).reshape(-1, 1, 1)  # use for pow
+            kslong = torch.arange(1, deg + 1, device=kern_values.device, dtype=torch.long)  # use for indexing
+
+            # note that s_k is 0-indexed, so we must subtract 1 from kslong
+            e_n[deg] = (m1.pow(ks-1) * e_n.index_select(0, deg-kslong) * s_k.index_select(0, kslong-1)).sum(dim=0) / deg
+
         return (self.outputscale.reshape(-1, 1, 1) * e_n[1:]).sum(dim=0)
 
 

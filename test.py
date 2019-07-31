@@ -540,9 +540,11 @@ class TestDuvenaudKernel(TestCase):
         manual_k = ScaleKernel(gpytorch.kernels.AdditiveKernel(RBFKernel(active_dims=0),
                                                                RBFKernel(active_dims=1),
                                                                RBFKernel(active_dims=2)))
+        manual_k.initialize(outputscale=1.)
         manual_add_k_val = manual_k(testvals, testvals).evaluate()
 
-        self.assertTrue(torch.allclose(add_k_val, manual_add_k_val))
+        np.testing.assert_allclose(add_k_val.detach().numpy(), manual_add_k_val.detach().numpy(), atol=1e-5)
+        # self.assertTrue(torch.allclose(add_k_val, manual_add_k_val))
 
     def test_degree2(self):
         AddK = DuvenaudAdditiveKernel(3, 2)
@@ -555,23 +557,56 @@ class TestDuvenaudKernel(TestCase):
         manual_k1 = ScaleKernel(gpytorch.kernels.AdditiveKernel(RBFKernel(active_dims=0),
                                                                RBFKernel(active_dims=1),
                                                                RBFKernel(active_dims=2)))
-        manual_k1.initialize(outputscale=1/3)
+        manual_k1.initialize(outputscale=1/2)
         manual_k2 = ScaleKernel(gpytorch.kernels.AdditiveKernel(RBFKernel(active_dims=[0,1]),
                                                                 RBFKernel(active_dims=[1,2]),
                                                                 RBFKernel(active_dims=[0,2])))
-        manual_k2.initialize(outputscale=1/3)
+        manual_k2.initialize(outputscale=1/2)
         manual_k = gpytorch.kernels.AdditiveKernel(manual_k1, manual_k2)
         manual_add_k_val = manual_k(testvals, testvals).evaluate()
 
-        self.assertTrue(torch.allclose(add_k_val, manual_add_k_val))
+        np.testing.assert_allclose(add_k_val.detach().numpy(), manual_add_k_val.detach().numpy(), atol=1e-5)
+        # self.assertTrue(torch.allclose(add_k_val, manual_add_k_val))
 
     def test_degree3(self):
-        AddK = DuvenaudAdditiveKernel(2, 3)
-        self.assertEqual(AddK.lengthscale.numel(), 2)
-        self.assertEqual(AddK.outputscale.numel(), 2)
+        # just make sure it doesn't break here.
+        AddK = DuvenaudAdditiveKernel(3, 3)
+        self.assertEqual(AddK.lengthscale.numel(), 3)
+        self.assertEqual(AddK.outputscale.numel(), 3)
 
-        testvals = torch.tensor([[2, 3], [5, 2]], dtype=torch.float)
+        testvals = torch.tensor([[1, 2, 3], [7, 5, 2]], dtype=torch.float)
         add_k_val = AddK(testvals, testvals).evaluate()
+
+        manual_k1 = ScaleKernel(gpytorch.kernels.AdditiveKernel(RBFKernel(active_dims=0),
+                                                                RBFKernel(active_dims=1),
+                                                                RBFKernel(active_dims=2)))
+        manual_k1.initialize(outputscale=1 / 3)
+        manual_k2 = ScaleKernel(gpytorch.kernels.AdditiveKernel(RBFKernel(active_dims=[0, 1]),
+                                                                RBFKernel(active_dims=[1, 2]),
+                                                                RBFKernel(active_dims=[0, 2])))
+        manual_k2.initialize(outputscale=1 / 3)
+
+        manual_k3 = ScaleKernel(gpytorch.kernels.AdditiveKernel(RBFKernel()))
+        manual_k3.initialize(outputscale=1 / 3)
+        manual_k = gpytorch.kernels.AdditiveKernel(manual_k1, manual_k2, manual_k3)
+        manual_add_k_val = manual_k(testvals, testvals).evaluate()
+        np.testing.assert_allclose(add_k_val.detach().numpy(), manual_add_k_val.detach().numpy(), atol=1e-5)
+
+
+    def test_optimizing(self):
+        AddK = DuvenaudAdditiveKernel(real_d, max_degree=5)
+        model = ExactGPModel(real_data, real_target, gpytorch.likelihoods.GaussianLikelihood(), ScaleKernel(AddK))
+        optim = torch.optim.Adam(model.parameters(), lr=0.1)
+        mll = gpytorch.mlls.ExactMarginalLogLikelihood(model.likelihood,model)
+        model.train()
+        for i in range(50):
+            optim.zero_grad()
+            out = model(real_data)
+            loss = -mll(out, real_target)
+            loss.backward()
+            optim.step()
+
+
 
 
 class TestManualRescaleKernel(TestCase):
