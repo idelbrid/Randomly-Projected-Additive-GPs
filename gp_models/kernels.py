@@ -373,25 +373,28 @@ def postprocess_rbf(dist_mat):
 
 
 class DuvenaudAdditiveKernel(gpytorch.kernels.Kernel):
-    def __init__(self, d, max_degree=None, active_dims=None, **kwargs):
-        self.d = d
-        if max_degree is None:
-            self.max_degree = d
-        elif max_degree > d:  # force cap on max_degree (silently)
-            self.max_degree = d
-        else:
-            self.max_degree = max_degree
+    def __init__(self, base_kernel, num_dims, max_degree=None, active_dims=None, **kwargs):
+        """Create an AdditiveKernel a la https://arxiv.org/abs/1112.4394 using Newton-Girard Formulae
 
-        super(DuvenaudAdditiveKernel, self).__init__(has_lengthscale=True,
+        :param base_kernel: a base 1-dimensional kernel. NOTE: put ard_num_dims=d in the base kernel...
+        :param max_degree: the maximum numbers of kernel degrees to compute
+        :param active_dims:
+        :param kwargs:
+        """
+        super(DuvenaudAdditiveKernel, self).__init__(has_lengthscale=False,
                                                      active_dims=active_dims,
-                                                     lengthscale_prior=None,
-                                                     lengthscale_constraint=None,
-                                                     ard_num_dims=d,
                                                      **kwargs
                                                      )
 
+        self.base_kernel = base_kernel
+        self.num_dims = num_dims
+        if max_degree is None:
+            self.max_degree = self.num_dims
+        elif max_degree > self.num_dims:  # force cap on max_degree (silently)
+            self.max_degree = self.num_dims
+        else:
+            self.max_degree = max_degree
 
-        self.kernels = torch.nn.ModuleList([gpytorch.kernels.RBFKernel() for _ in range(d)])
         self.register_parameter(
             name='raw_outputscale',
             parameter=torch.nn.Parameter(torch.zeros(*self.batch_shape, 1, self.max_degree))
@@ -417,17 +420,12 @@ class DuvenaudAdditiveKernel(gpytorch.kernels.Kernel):
         self.initialize(raw_outputscale=self.outputscale_constraint.inverse_transform(value))
 
     def forward(self, x1, x2, diag=False, last_dim_is_batch=False, **params):
-        x1_ = x1.div(self.lengthscale)  # account for lengthscales first
-        x2_ = x2.div(self.lengthscale)
 
         # kern_values is just the order-1 terms
         # kern_values = D x n x n
-        kern_values = self.covar_dist(x1_, x2_, diag=diag, last_dim_is_batch=True,
-                                      square_dist=True,
-                                      dist_postprocess_func=postprocess_rbf,
-                                      postprocess=True)
+        # TODO: make this work when diag=True
+        kern_values = self.base_kernel(x1, x2, diag=diag, last_dim_is_batch=True, **params)
         # last dim is batch, which gets moved up to pos. 1
-        # compute scale-less values for each degree
 
         kvals = torch.range(1, self.max_degree, device=kern_values.device).reshape(-1, 1, 1, 1)
         # kvals = 1 x R (these are indexes only)
@@ -438,7 +436,7 @@ class DuvenaudAdditiveKernel(gpytorch.kernels.Kernel):
         e_n = torch.empty(self.max_degree+1, *kern_values.shape[1:], device=kern_values.device)
         e_n[0, :, :] = 1.0
 
-        # power sums s_k (e.g. sum_i^d z_i^k
+        # power sums s_k (e.g. sum_i^num_dims z_i^k
         # s_k is R x n x n
         s_k = kern_values.pow(kvals).sum(dim=1)
 
@@ -460,12 +458,12 @@ class DuvenaudAdditiveKernel(gpytorch.kernels.Kernel):
 #     """Currently unused LR model"""
 #     def __init__(self, trainX, trainY):
 #         super(LinearRegressionModel, self).__init__()
-#         [n, d] = trainX.shape
+#         [n, num_dims] = trainX.shape
 #         [m, k] = trainY.shape
 #         if not n == m:
 #             raise ValueError
 #
-#         self.linear = torch.nn.Linear(d, k)
+#         self.linear = torch.nn.Linear(num_dims, k)
 #
 #     def forward(self, x):
 #         out = self.linear(x)
@@ -476,12 +474,12 @@ class DuvenaudAdditiveKernel(gpytorch.kernels.Kernel):
 #     """Currently unused "extreme learning machine" model"""
 #     def __init__(self, trainX, trainY, A, b, activation='sigmoid'):
 #         super(ELMModule, self).__init__()
-#         [n, d] = trainX.shape
+#         [n, num_dims] = trainX.shape
 #         [m, _] = trainY.shape
 #         [d_, k] = A.shape
 #         if not n == m:
 #             raise ValueError
-#         if not d == d_:
+#         if not num_dims == d_:
 #             raise ValueError
 #         self.linear = torch.nn.Linear(k, 1)
 #         self.A = A
@@ -590,7 +588,7 @@ class InverseMQKernel(gpytorch.kernels.Kernel):
 class GAMFunction(torch.autograd.Function):
     """Function to compute sum of RBF kernels with efficient memory usage (Only O(nm) memory)
     The result of forward/backward are n x m matrices, so we can get away with only allocating n x m matrices at a time
-        instead of expanding to a d x n x m matrix.
+        instead of expanding to a num_dims x n x m matrix.
     Does not support batch mode!
     """
     @staticmethod
@@ -599,8 +597,8 @@ class GAMFunction(torch.autograd.Function):
         m, d2 = x2.shape
         if d2 != d:
             raise ValueError("Dimension mismatch")
-        x1_ = x1.div(lengthscale)  # +n x d vector
-        x2_ = x2.div(lengthscale)  # +m x d vector
+        x1_ = x1.div(lengthscale)  # +n x num_dims vector
+        x2_ = x2.div(lengthscale)  # +m x num_dims vector
         ctx.save_for_backward(x1, x2, lengthscale)  # maybe have to change?
         kernel = torch.zeros(n, m, dtype=x1_.dtype, device=x1.device)  # use accumulator+loop instead of expansion
         for i in range(d):

@@ -530,8 +530,8 @@ class TestExperimentHelpers(TestCase):
 
 class TestDuvenaudKernel(TestCase):
     def test_degree1(self):
-        AddK = DuvenaudAdditiveKernel(3, 1)
-        self.assertEqual(AddK.lengthscale.numel(), 3)
+        AddK = DuvenaudAdditiveKernel(RBFKernel(ard_num_dims=3), 3, 1)
+        self.assertEqual(AddK.base_kernel.lengthscale.numel(), 3)
         self.assertEqual(AddK.outputscale.numel(), 1)
 
         testvals = torch.tensor([[1, 2, 3], [7, 5, 2]], dtype=torch.float)
@@ -547,8 +547,8 @@ class TestDuvenaudKernel(TestCase):
         # self.assertTrue(torch.allclose(add_k_val, manual_add_k_val))
 
     def test_degree2(self):
-        AddK = DuvenaudAdditiveKernel(3, 2)
-        self.assertEqual(AddK.lengthscale.numel(), 3)
+        AddK = DuvenaudAdditiveKernel(RBFKernel(ard_num_dims=3), 3, 2)
+        self.assertEqual(AddK.base_kernel.lengthscale.numel(), 3)
         self.assertEqual(AddK.outputscale.numel(), 2)
 
         testvals = torch.tensor([[1, 2, 3], [7, 5, 2]], dtype=torch.float)
@@ -570,8 +570,8 @@ class TestDuvenaudKernel(TestCase):
 
     def test_degree3(self):
         # just make sure it doesn't break here.
-        AddK = DuvenaudAdditiveKernel(3, 3)
-        self.assertEqual(AddK.lengthscale.numel(), 3)
+        AddK = DuvenaudAdditiveKernel(RBFKernel(ard_num_dims=3), 3, 3)
+        self.assertEqual(AddK.base_kernel.lengthscale.numel(), 3)
         self.assertEqual(AddK.outputscale.numel(), 3)
 
         testvals = torch.tensor([[1, 2, 3], [7, 5, 2]], dtype=torch.float)
@@ -594,7 +594,7 @@ class TestDuvenaudKernel(TestCase):
 
 
     def test_optimizing(self):
-        AddK = DuvenaudAdditiveKernel(real_d, max_degree=5)
+        AddK = DuvenaudAdditiveKernel(RBFKernel(ard_num_dims=real_d), real_d, max_degree=5)
         model = ExactGPModel(real_data, real_target, gpytorch.likelihoods.GaussianLikelihood(), ScaleKernel(AddK))
         optim = torch.optim.Adam(model.parameters(), lr=0.1)
         mll = gpytorch.mlls.ExactMarginalLogLikelihood(model.likelihood,model)
@@ -606,6 +606,24 @@ class TestDuvenaudKernel(TestCase):
             loss.backward()
             optim.step()
 
+    def test_ard(self):
+        base_k = RBFKernel(ard_num_dims=3)
+        base_k.initialize(lengthscale=[1., 2., 3.])
+        AddK = DuvenaudAdditiveKernel(base_k, real_d, max_degree=1)
+
+        testvals = torch.tensor([[1, 2, 3], [7, 5, 2]], dtype=torch.float)
+        add_k_val = AddK(testvals, testvals).evaluate()
+
+        ks = []
+        for i in range(3):
+            k = RBFKernel(active_dims=i)
+            k.initialize(lengthscale=i+1)
+            ks.append(k)
+        manual_k = ScaleKernel(gpytorch.kernels.AdditiveKernel(*ks))
+        manual_k.initialize(outputscale=1.)
+        manual_add_k_val = manual_k(testvals, testvals).evaluate()
+
+        np.testing.assert_allclose(add_k_val.detach().numpy(), manual_add_k_val.detach().numpy(), atol=1e-5)
 
 
 
