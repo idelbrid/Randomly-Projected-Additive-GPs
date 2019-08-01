@@ -422,19 +422,19 @@ class DuvenaudAdditiveKernel(gpytorch.kernels.Kernel):
     def forward(self, x1, x2, diag=False, last_dim_is_batch=False, **params):
 
         # kern_values is just the order-1 terms
-        # kern_values = D x n x n
-        # TODO: make this work when diag=True
+        # kern_values = D x n x n unless diag=True
         kern_values = self.base_kernel(x1, x2, diag=diag, last_dim_is_batch=True, **params)
         # last dim is batch, which gets moved up to pos. 1
-
-        kvals = torch.range(1, self.max_degree, device=kern_values.device).reshape(-1, 1, 1, 1)
-        # kvals = 1 x R (these are indexes only)
+        shape = [-1, 1, 1, 1] if not diag else [-1, 1, 1]
+        kvals = torch.range(1, self.max_degree, device=kern_values.device).reshape(*shape)
+        # kvals = R x 1 x 1 x 1 (these are indexes only)
 
         # e_n = torch.ones(self.max_degree+1, *kern_values.shape[1:], device=kern_values.device)  # includes 0
         # e_n: elementary symmetric polynomial of degree n (e.g. z1 z2 + z1 z3 + z2 z3)
         # e_n is R x n x n, and the array is properly 0 indexed.
+
         e_n = torch.empty(self.max_degree+1, *kern_values.shape[1:], device=kern_values.device)
-        e_n[0, :, :] = 1.0
+        e_n[0, ...] = 1.0
 
         # power sums s_k (e.g. sum_i^num_dims z_i^k
         # s_k is R x n x n
@@ -443,27 +443,29 @@ class DuvenaudAdditiveKernel(gpytorch.kernels.Kernel):
         # just the constant -1
         m1 = torch.tensor([-1], dtype=torch.float, device=kern_values.device)
 
+        shape = [-1, 1, 1] if not diag else [-1, 1]
         for deg in range(1, self.max_degree+1):  # deg goes from 1 to R (it's 1-indexed!)
             # we avg over k [1, ..., deg] (-1)^(k-1)e_{deg-k} s_{k}
-            ks = torch.arange(1, deg+1, device=kern_values.device, dtype=torch.float).reshape(-1, 1, 1)  # use for pow
+
+            ks = torch.arange(1, deg+1, device=kern_values.device, dtype=torch.float).reshape(*shape)  # use for pow
             kslong = torch.arange(1, deg + 1, device=kern_values.device, dtype=torch.long)  # use for indexing
 
             # note that s_k is 0-indexed, so we must subtract 1 from kslong
             e_n[deg] = (m1.pow(ks-1) * e_n.index_select(0, deg-kslong) * s_k.index_select(0, kslong-1)).sum(dim=0) / deg
 
-        return (self.outputscale.reshape(-1, 1, 1) * e_n[1:]).sum(dim=0)
+        return (self.outputscale.reshape(*shape) * e_n[1:]).sum(dim=0)
 
 
 # class LinearRegressionModel(torch.nn.Module):
 #     """Currently unused LR model"""
 #     def __init__(self, trainX, trainY):
 #         super(LinearRegressionModel, self).__init__()
-#         [n, num_dims] = trainX.shape
+#         [n, d] = trainX.shape
 #         [m, k] = trainY.shape
 #         if not n == m:
 #             raise ValueError
 #
-#         self.linear = torch.nn.Linear(num_dims, k)
+#         self.linear = torch.nn.Linear(d, k)
 #
 #     def forward(self, x):
 #         out = self.linear(x)
@@ -474,12 +476,12 @@ class DuvenaudAdditiveKernel(gpytorch.kernels.Kernel):
 #     """Currently unused "extreme learning machine" model"""
 #     def __init__(self, trainX, trainY, A, b, activation='sigmoid'):
 #         super(ELMModule, self).__init__()
-#         [n, num_dims] = trainX.shape
+#         [n, d] = trainX.shape
 #         [m, _] = trainY.shape
 #         [d_, k] = A.shape
 #         if not n == m:
 #             raise ValueError
-#         if not num_dims == d_:
+#         if not d == d_:
 #             raise ValueError
 #         self.linear = torch.nn.Linear(k, 1)
 #         self.A = A
@@ -510,8 +512,8 @@ class ProjectionKernel(gpytorch.kernels.Kernel):
 # TODO: clean up this set of code; a lot of repeated stuff.
 
 class ManualRescaleProjectionKernel(gpytorch.kernels.Kernel):
-    def __init__(self, projection_module, base_kernel, prescale=False, ard_num_dims=None, learn_proj=False, **kwargs):
-        super(ManualRescaleProjectionKernel, self).__init__(has_lengthscale=True, ard_num_dims=ard_num_dims, **kwargs)
+    def __init__(self, projection_module, base_kernel, prescale=False, ard_d=None, learn_proj=False, **kwargs):
+        super(ManualRescaleProjectionKernel, self).__init__(has_lengthscale=True, ard_d=ard_d, **kwargs)
         self.projection_module = projection_module
         self.learn_proj = learn_proj
         if not self.learn_proj:
@@ -556,12 +558,12 @@ class MemoryEfficientGamKernel(gpytorch.kernels.Kernel):
 
 #
 # class PseudoAdditiveKernel(gpytorch.kernels.Kernel):
-#     def __init__(self, base_kernel, num_dims):
+#     def __init__(self, base_kernel, d):
 #         super(PseudoAdditiveKernel, self).__init__()
 #         self.base_kernel = base_kernel
-#         self.num_dims = num_dims
+#         self.d = d
 #         self._additive_kernel = gpytorch.kernels.AdditiveStructureKernel(
-#             base_kernel, num_dims)
+#             base_kernel, d)
 #
 #     def forward(self, x1, x2, diag=False, last_dim_is_batch=False, **params):
 #         k = self._additive_kernel(x1, x2, diag=diag, last_dim_is_batch=last_dim_is_batch, **params)
@@ -588,7 +590,7 @@ class InverseMQKernel(gpytorch.kernels.Kernel):
 class GAMFunction(torch.autograd.Function):
     """Function to compute sum of RBF kernels with efficient memory usage (Only O(nm) memory)
     The result of forward/backward are n x m matrices, so we can get away with only allocating n x m matrices at a time
-        instead of expanding to a num_dims x n x m matrix.
+        instead of expanding to a d x n x m matrix.
     Does not support batch mode!
     """
     @staticmethod
@@ -597,8 +599,8 @@ class GAMFunction(torch.autograd.Function):
         m, d2 = x2.shape
         if d2 != d:
             raise ValueError("Dimension mismatch")
-        x1_ = x1.div(lengthscale)  # +n x num_dims vector
-        x2_ = x2.div(lengthscale)  # +m x num_dims vector
+        x1_ = x1.div(lengthscale)  # +n x d vector
+        x2_ = x2.div(lengthscale)  # +m x d vector
         ctx.save_for_backward(x1, x2, lengthscale)  # maybe have to change?
         kernel = torch.zeros(n, m, dtype=x1_.dtype, device=x1.device)  # use accumulator+loop instead of expansion
         for i in range(d):

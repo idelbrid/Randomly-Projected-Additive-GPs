@@ -77,7 +77,7 @@ class ModelAverage(object):
         norm_const = sum(np.exp(w) for w in weights)
         self.norm_weights = [np.exp(w)/norm_const for w in weights]
 
-    def mean(self):  # TODO: Check that this is right...
+    def mean(self):
         """Return the mean of the weighted sum of the densities
         This is just a weighted sum of means."""
         mean = torch.zeros_like(self.predictions[0].mean)

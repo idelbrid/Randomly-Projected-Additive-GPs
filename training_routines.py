@@ -202,14 +202,14 @@ def create_general_rp_poly_kernel(d, degrees, learn_proj=False, weighted=False, 
 def create_rp_kernel(d, k, J, ard=False, activation=None, ski=False,
                      grid_size=None, learn_proj=False, weighted=False, kernel_type='RBF'):
     """Construct a RP kernel object (though not random if learn_proj is true)
-    num_dims is dimensionality of data
+    d is dimensionality of data
     k is the dimensionality of the projections
     J is the number of independent RP kernels in a RPKernel object
     ard set to True if each RBF kernel should use ARD
     activation None if no nonlinearity applied after projection. Otherwise, the name of the nonlinearity
     ski set to True computes each sub-kernel by scalable kernel interpolation
     grid_size ignored if ski is False. Otherwise, the size of the grid in each dimension
-        * Note that if we project into k dimensions, we have grid_size^num_dims grid points
+        * Note that if we project into k dimensions, we have grid_size^d grid points
     learn_proj set to True to learn projection matrix elements
     weighted set to True to learn the linear combination of kernels
     """
@@ -226,7 +226,7 @@ def create_rp_kernel(d, k, J, ard=False, activation=None, ski=False,
     projs = []
     bs = [torch.zeros(k) for _ in range(J)]
     for j in range(J):
-        projs.append(rp.gen_rp(d, k))  # num_dims, k just output dimensions of matrix
+        projs.append(rp.gen_rp(d, k))  # d, k just output dimensions of matrix
         if kernel_type == 'RBF':
             kernel = gpytorch.kernels.RBFKernel(ard_num_dims)
         elif kernel_type == 'Matern':
@@ -684,7 +684,7 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
 
     # replace with value from dataset for convenience
     for k, v in list(model_kwargs.items()):
-        if isinstance(v, str) and v == 'num_dims':
+        if isinstance(v, str) and v == 'd':
             model_kwargs[k] = d
 
     # Change some options just for initial training with random restarts.
