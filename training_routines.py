@@ -1,11 +1,15 @@
 import math
 import rp
-from gp_models import ExactGPModel, ProjectionKernel, \
-    PolynomialProjectionKernel, DNN,\
-    GeneralizedPolynomialProjectionKernel, GeneralizedProjectionKernel, StrictlyAdditiveKernel, AdditiveKernel, DuvenaudAdditiveKernel
-from gp_models.kernels import ManualRescaleProjectionKernel, InverseMQKernel, MemoryEfficientGamKernel
+from gp_models.models import ExactGPModel
+from gp_models.kernels.etc import DNN
+from gp_models.kernels import PolynomialProjectionKernel, GeneralizedProjectionKernel, GeneralizedPolynomialProjectionKernel
+from gp_models.kernels import StrictlyAdditiveKernel, CustomAdditiveKernel
+from gp_models.kernels import ScaledProjectionKernel, InverseMQKernel, MemoryEfficientGamKernel
+from gpytorch.kernels import ScaleKernel, RBFKernel, GridInterpolationKernel, MaternKernel, InducingPointKernel
+from gpytorch.kernels import MultiDeviceKernel
+from gpytorch.kernels import NewtonGirardAdditiveKernel
 import gpytorch
-from gpytorch.kernels import ScaleKernel, RBFKernel, GridInterpolationKernel, MaternKernel, InducingPointKernel, MultiDeviceKernel
+
 from gpytorch.mlls import VariationalELBO, VariationalMarginalLogLikelihood
 from gp_models import SVGPRegressionModel
 import torch
@@ -16,6 +20,7 @@ from config import data_base_path, model_base_path
 import numpy as np
 from itertools import combinations
 from fitting.optimizing import train_to_convergence, mean_squared_error, learn_projections
+
 
 def _map_to_optim(optimizer):
     """Helper to map optimizer string names to torch objects"""
@@ -63,16 +68,9 @@ def create_deep_rp_poly_kernel(d, degrees, projection_architecture, projection_k
     else:
         raise ValueError("Unknown kernel type")
 
-# <<<<<<< HEAD
     kernel = GeneralizedProjectionKernel(degrees, d, kernel, module,
                                                  learn_proj=learn_proj,
                                                  weighted=weighted, ski=ski, ski_options=ski_options, X=X,**kwargs)
-# =======
-#     kernel = GeneralizedPolynomialProjectionKernel(J, k, num_dims, kernel, module,
-#                                                    learn_proj=learn_proj,
-#                                                    weighted=weighted, ski=ski, ski_options=ski_options, X=X,
-# >>>>>>> 50d9d6c6c2338a0f712858232ea93dd4f3107921
-#                                                    **kwargs)
     kernel.initialize(init_mixin_range, init_lengthscale_range)
     return kernel
 
@@ -169,7 +167,7 @@ def create_additive_rp_kernel(d, J, learn_proj=False, kernel_type='RBF', space_p
         ard_num_dims = None
         initial_ls = _sample_from_range(1, init_lengthscale_range)
 
-    proj_kernel = ManualRescaleProjectionKernel(proj_module, add_kernel, prescale=prescale, ard_num_dims=ard_num_dims,
+    proj_kernel = ScaledProjectionKernel(proj_module, add_kernel, prescale=prescale, ard_num_dims=ard_num_dims,
                                                 learn_proj=learn_proj)
     proj_kernel.initialize(lengthscale=initial_ls)
     return proj_kernel
@@ -197,50 +195,6 @@ def create_general_rp_poly_kernel(d, degrees, learn_proj=False, weighted=False, 
                                          X=X, **kwargs)
     kernel.initialize(init_mixin_range, init_lengthscale_range)
     return kernel
-
-# TODO: Refactor by wrapping kernel "kinds" such as RP kernel, additive kernel etc. in a class and use inheritance...
-def create_rp_kernel(d, k, J, ard=False, activation=None, ski=False,
-                     grid_size=None, learn_proj=False, weighted=False, kernel_type='RBF'):
-    """Construct a RP kernel object (though not random if learn_proj is true)
-    d is dimensionality of data
-    k is the dimensionality of the projections
-    J is the number of independent RP kernels in a RPKernel object
-    ard set to True if each RBF kernel should use ARD
-    activation None if no nonlinearity applied after projection. Otherwise, the name of the nonlinearity
-    ski set to True computes each sub-kernel by scalable kernel interpolation
-    grid_size ignored if ski is False. Otherwise, the size of the grid in each dimension
-        * Note that if we project into k dimensions, we have grid_size^d grid points
-    learn_proj set to True to learn projection matrix elements
-    weighted set to True to learn the linear combination of kernels
-    """
-    # TODO: implement random initialization
-    warnings.warn(DeprecationWarning("create_rp_kernel is deprecated and won't work right from now on."))
-    if J < 1:
-        raise ValueError("J<1")
-    if ard:
-        ard_num_dims = k
-    else:
-        ard_num_dims = None
-
-    kernels = []
-    projs = []
-    bs = [torch.zeros(k) for _ in range(J)]
-    for j in range(J):
-        projs.append(rp.gen_rp(d, k))  # d, k just output dimensions of matrix
-        if kernel_type == 'RBF':
-            kernel = gpytorch.kernels.RBFKernel(ard_num_dims)
-        elif kernel_type == 'Matern':
-            kernel = gpytorch.kernels.MaternKernel(nu=1.5)
-        else:
-            raise ValueError("Unknown kernel type")
-        if ski:
-            kernel = gpytorch.kernels.GridInterpolationKernel(kernel,
-                                                              grid_size=grid_size,
-                                                              num_dims=k)
-        kernels.append(kernel)
-
-    # RP kernel takes a lot of arguments
-    return ProjectionKernel(J, k, d, kernels, projs, bs, activation=activation, learn_proj=learn_proj, weighted=weighted)
 
 
 def create_strictly_additive_kernel(d, weighted=False, kernel_type='RBF', init_lengthscale_range=(1.0, 1.0),
@@ -278,14 +232,19 @@ def create_additive_kernel(d, groups, weighted=False, kernel_type='RBF', init_le
     else:
         raise ValueError("Unknown kernel type")
 
-    kernel = AdditiveKernel(groups, d, kernel, weighted=weighted, ski=ski, ski_options=ski_options, X=X, **kwargs)
+    kernel = CustomAdditiveKernel(groups, d, kernel, weighted=weighted, ski=ski, ski_options=ski_options, X=X, **kwargs)
     kernel.initialize(init_mixin_range, init_lengthscale_range)
     return kernel
 
 
+def create_newton_girard_additive_kernel(d, max_degree):
+    """Use the Newton-Girard formulae to model higher-order interactions."""
+    return NewtonGirardAdditiveKernel(RBFKernel(ard_num_dims=d), d, max_degree)
+
+
 def create_duvenaud_additive_kernel(d, max_degree):
-    kernel = DuvenaudAdditiveKernel(RBFKernel(ard_num_dims=d), d, max_degree)
-    return kernel
+    """Now an alias of the NewtonGirardAdditiveKernel"""
+    return create_newton_girard_additive_kernel(d, max_degree)
 
 
 def create_multi_additive_kernel(d, max_degree, weighted=False, kernel_type='RBF', init_lengthscale_range=(1.0, 1.0),
@@ -304,7 +263,7 @@ def create_multi_additive_kernel(d, max_degree, weighted=False, kernel_type='RBF
     for deg in range(1, max_degree+1):
         groups.extend(list(set(combinations(list(range(d)), deg))))
 
-    kernel = AdditiveKernel(groups, d, kernel, weighted=weighted, ski=ski, ski_options=ski_options, X=X, **kwargs)
+    kernel = CustomAdditiveKernel(groups, d, kernel, weighted=weighted, ski=ski, ski_options=ski_options, X=X, **kwargs)
     kernel.initialize(init_mixin_range, init_lengthscale_range)
     return kernel
 
@@ -322,46 +281,6 @@ def create_multi_full_kernel(d, J, ard=False, ski=False, grid_size=None, kernel_
         new_kernel.initialize(outputscale=outputscales[j])
         subkernels.append(new_kernel)
     return gpytorch.kernels.AdditiveKernel(*subkernels)
-
-
-def create_pca_kernel(trainX, random_projections=False, k=1, J=1, explained_variance=.99, ski=False, grid_size=None,
-                      weighted=False, kernel_type='RBF'):
-    # TODO: convert to using PolynomialProjectionKernel
-    # TODO: add random initialization
-    [n, d] = trainX.shape
-    if not random_projections and k != 1:
-        raise ValueError("Additive RBF kernel selected but k is not 1.")
-    if explained_variance > 1 or explained_variance < 0:
-        raise ValueError("Explained variance ratio should be between 0 and 1.")
-    if explained_variance == 1:
-        n_components = d
-    else:
-        n_components = explained_variance
-    pca = PCA(n_components, copy=False, random_state=123456)
-    pca.fit(trainX)
-    W = torch.tensor(pca.components_.T, dtype=torch.float)
-    D = torch.tensor(pca.explained_variance_, dtype=torch.float)
-    if not random_projections:
-        J = len(D)
-
-    kernels = []
-    projs = []
-    bs = [torch.zeros(k) for _ in range(J)]
-    for j in range(J):
-        if random_projections:
-            projs.append(rp.gen_pca_rp(d, k, W.t(), D))
-        else:
-            projs.append(W[:, j].unsqueeze(1))
-        if kernel_type == 'RBF':
-            kernel = gpytorch.kernels.RBFKernel()
-        elif kernel_type == 'Matern':
-            kernel = gpytorch.kernels.MaternKernel(nu=1.5)
-        else:
-            raise ValueError("Unknown kernel type")
-        if ski:
-            kernel = gpytorch.kernels.GridInterpolationKernel(kernel, grid_size=grid_size, num_dims=k)
-        kernels.append(kernel)
-    return ProjectionKernel(J, k, d, kernels, projs, bs, activation=None, learn_proj=False, weighted=weighted)
 
 
 def create_full_kernel(d, ard=False, ski=False, grid_size=None, kernel_type='RBF', init_lengthscale_range=(1.0, 1.0)):
@@ -451,9 +370,7 @@ def create_svi_gp(trainX, kind, **kwargs):
     likelihood = gpytorch.likelihoods.GaussianLikelihood(
         noise_prior=noise_prior_)
     grid_size = kwargs.pop('grid_size')
-    if kind == 'rp':
-        kernel = create_rp_kernel(d, **kwargs)
-    elif kind == 'additive':
+    if kind == 'additive':
         kernel = create_strictly_additive_kernel(d, ski=False, **kwargs)
     elif kind == 'full':
         kernel = create_full_kernel(d, ski=False, **kwargs)
@@ -570,10 +487,6 @@ def create_exact_gp(trainX, trainY, kind, devices=('cpu',), **kwargs):
     #     kernel = create_pca_kernel(trainX,grid_size=grid_size,
     #                                random_projections=False, k=1,
     #                                **kwargs)
-    elif kind == 'rp':
-        if ski and grid_size is None:
-            grid_size = int(grid_ratio * math.pow(n, 1 / kwargs['k']))
-        kernel = create_rp_kernel(d, grid_size=grid_size, **kwargs)
     elif kind == 'rp_poly':
         # TODO: check this
         # if ski and grid_size is None:
