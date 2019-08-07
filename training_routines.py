@@ -48,24 +48,54 @@ def _sample_from_range(num_samples, range_):
     return torch.rand(num_samples) * (range_[1] - range_[0]) + range_[0]
 
 
+def _map_to_kernel(return_object, kernel_type, keops, **key_words):
+    # TODO: have MemoryEfficientGAM kernel in here.
+    if return_object:
+        cls, kwargs = _map_to_kernel(False, kernel_type, keops)
+        return cls(**key_words, **kwargs)
+    else:
+        if kernel_type == 'RBF':
+            if not keops:
+                cls = gpytorch.kernels.RBFKernel
+                kwargs = dict(**key_words)
+            else:
+                cls = gpytorch.kernels.keops.RBFKernel
+                kwargs = dict(**key_words)
+        elif kernel_type == 'Matern':
+            if not keops:
+                cls = gpytorch.kernels.MaternKernel
+                kwargs = dict(nu=1.5, **key_words)
+            else:
+                cls = gpytorch.kernels.keops.MaternKernel
+                kwargs = dict(nu=1.5, **key_words)
+        elif kernel_type == 'InverseMQ':
+            if not keops:
+                cls = InverseMQKernel
+                kwargs = dict(*key_words)
+            else:
+                raise ValueError("IMQ not implemented yet with KeOps")
+        elif kernel_type == 'Cosine':
+            if not keops:
+                cls = gpytorch.kernels.CosineKernel
+                kwargs = dict(**key_words)
+            else:
+                raise ValueError("Cosine kernel not implemented yet with KeOps")
+        else:
+            raise ValueError("Unknown kernel type")
+        return cls, kwargs
+
+
 def create_deep_rp_poly_kernel(d, degrees, projection_architecture, projection_kwargs, learn_proj=False,
                                weighted=False, kernel_type='RBF', init_mixin_range=(1.0, 1.0),
                                init_lengthscale_range=(1.0, 1.0), ski=False, ski_options=None,
-                               X=None):
+                               X=None, keops=False):
     outputs = sum(degrees)
     if projection_architecture == 'dnn':
         module = DNN(d, outputs, **projection_kwargs)
     else:
         raise NotImplementedError("No architecture besides DNN is implemented ATM")
 
-    if kernel_type == 'RBF':
-        kernel = gpytorch.kernels.RBFKernel
-        kwargs = dict()
-    elif kernel_type == 'Matern':
-        kernel = gpytorch.kernels.MaternKernel
-        kwargs = dict(nu=1.5)
-    else:
-        raise ValueError("Unknown kernel type")
+    kernel, kwargs = _map_to_kernel(False, kernel_type, keops)
 
     kernel = GeneralizedProjectionKernel(degrees, d, kernel, module,
                                                  learn_proj=learn_proj,
@@ -77,7 +107,7 @@ def create_deep_rp_poly_kernel(d, degrees, projection_architecture, projection_k
 def create_rp_poly_kernel(d, k, J, activation=None,
                           learn_proj=False, weighted=False, kernel_type='RBF',
                           space_proj=False, init_mixin_range=(1.0, 1.0), init_lengthscale_range=(1.0, 1.0),
-                          ski=False, ski_options=None, X=None, proj_dist='gaussian',
+                          ski=False, ski_options=None, X=None, proj_dist='gaussian', keops=False
                           ):
     projs = [rp.gen_rp(d, k, dist=proj_dist) for _ in range(J)]
     bs = [torch.zeros(k) for _ in range(J)]
@@ -89,25 +119,17 @@ def create_rp_poly_kernel(d, k, J, activation=None,
         newW.requires_grad = False
         projs = [newW[i:i+1, :].t() for i in range (J)]
 
-    if kernel_type == 'RBF':
-        kernel = gpytorch.kernels.RBFKernel
-        kwargs = dict()
-    elif kernel_type == 'Matern':
-        kernel = gpytorch.kernels.MaternKernel
-        kwargs = dict(nu=1.5)
-    elif kernel_type == 'Cosine':
-        kernel = gpytorch.kernels.CosineKernel
-    else:
-        raise ValueError("Unknown kernel type")
+    kernel, kwargs = _map_to_kernel(False, kernel_type, keops)
 
     kernel = PolynomialProjectionKernel(J, k, d, kernel, projs, bs, activation=activation, learn_proj=learn_proj,
                                         weighted=weighted, ski=ski, ski_options=ski_options, X=X, **kwargs)
     kernel.initialize(init_mixin_range, init_lengthscale_range)
     return kernel
 
+
 def create_additive_rp_kernel(d, J, learn_proj=False, kernel_type='RBF', space_proj=False, prescale=False, ard=True,
                               init_lengthscale_range=(1., 1.), ski=False, ski_options=None, proj_dist='gaussian',
-                              batch_kernel=True, mem_efficient=False, k=1):
+                              batch_kernel=True, mem_efficient=False, k=1, keops=False):
     if k > 1 and (mem_efficient or batch_kernel or space_proj):
         raise ValueError("Can't have k > 1 with memory efficient GAM kernel or a batch kernel or spaced projections.")
 
@@ -123,14 +145,8 @@ def create_additive_rp_kernel(d, J, learn_proj=False, kernel_type='RBF', space_p
     # proj_module.bias.data = torch.cat(bs, dim=0)
 
     def make_kernel(active_dim=None):
-        if kernel_type == 'RBF':
-            kernel = gpytorch.kernels.RBFKernel(active_dims=active_dim)
-        elif kernel_type == 'Matern':
-            kernel = gpytorch.kernels.MaternKernel(nu=1.5, active_dims=active_dim)
-        elif kernel_type == 'Cosine':
-            kernel = gpytorch.kernels.CosineKernel(active_dims=active_dim)
-        else:
-            raise ValueError("Unknown kernel type")
+        kernel = _map_to_kernel(True, kernel_type, keops, active_dims=active_dim)
+
         if hasattr(kernel, 'period_length'):
             kernel.initialize(period_length=torch.tensor([1.]))
         else:
@@ -174,21 +190,15 @@ def create_additive_rp_kernel(d, J, learn_proj=False, kernel_type='RBF', space_p
 
 def create_general_rp_poly_kernel(d, degrees, learn_proj=False, weighted=False, kernel_type='RBF',
                                   init_lengthscale_range=(1.0, 1.0), init_mixin_range=(1.0, 1.0),
-                                  ski=False, ski_options=None, X=None):
+                                  ski=False, ski_options=None, X=None, keops=False):
     out_dim = sum(degrees)
     W = torch.cat([rp.gen_rp(d, 1) for _ in range(out_dim)], dim=1).t()
     b = torch.zeros(out_dim)
     projection_module = torch.nn.Linear(d, out_dim, bias=False)
     projection_module.weight = torch.nn.Parameter(W)
     projection_module.bias = torch.nn.Parameter(b)
-    if kernel_type == 'RBF':
-        kernel = gpytorch.kernels.RBFKernel
-        kwargs = dict()
-    elif kernel_type == 'Matern':
-        kernel = gpytorch.kernels.MaternKernel
-        kwargs = dict(nu=1.5)
-    else:
-        raise ValueError("Unknown kernel type")
+
+    kernel, kwargs = _map_to_kernel(False, kernel_type, keops)
 
     kernel = GeneralizedProjectionKernel(degrees, d, kernel, projection_module, learn_proj, weighted, ski, ski_options,
                                          X=X, **kwargs)
@@ -198,7 +208,7 @@ def create_general_rp_poly_kernel(d, degrees, learn_proj=False, weighted=False, 
 
 def create_strictly_additive_kernel(d, weighted=False, kernel_type='RBF', init_lengthscale_range=(1.0, 1.0),
                                     init_mixin_range=(1.0, 1.0), ski=False, ski_options=None, X=None,
-                                    memory_efficient=False):
+                                    memory_efficient=False, keops=False):
     """Inefficient implementation of a kernel where each dimension has its own RBF subkernel."""
 
     if kernel_type == 'RBF' and memory_efficient:
@@ -206,14 +216,8 @@ def create_strictly_additive_kernel(d, weighted=False, kernel_type='RBF', init_l
         kernel = MemoryEfficientGamKernel(ard_num_dims=d)
         kernel.initialize(lengthscale=_sample_from_range(d, init_lengthscale_range))
         return kernel
-    elif kernel_type == 'RBF':
-        kernel = gpytorch.kernels.RBFKernel
-        kwargs = dict()
-    elif kernel_type == 'Matern':
-        kernel = gpytorch.kernels.MaternKernel
-        kwargs = dict(nu=3/2)
     else:
-        raise ValueError("Unknown kernel type")
+        kernel, kwargs = _map_to_kernel(False, kernel_type, keops)
 
     kernel = StrictlyAdditiveKernel(d, kernel, weighted, ski=ski, ski_options=ski_options, X=X, **kwargs)
     kernel.initialize(init_mixin_range, init_lengthscale_range)
@@ -221,15 +225,8 @@ def create_strictly_additive_kernel(d, weighted=False, kernel_type='RBF', init_l
 
 
 def create_additive_kernel(d, groups, weighted=False, kernel_type='RBF', init_lengthscale_range=(1.0, 1.0),
-                           init_mixin_range=(1.0, 1.0), ski=False, ski_options=None, X=None):
-    if kernel_type == 'RBF':
-        kernel = gpytorch.kernels.RBFKernel
-        kwargs = dict()
-    elif kernel_type == 'Matern':
-        kernel = gpytorch.kernels.MaternKernel
-        kwargs = dict(nu=3/2)
-    else:
-        raise ValueError("Unknown kernel type")
+                           init_mixin_range=(1.0, 1.0), ski=False, ski_options=None, X=None, keops=False):
+    kernel, kwargs = _map_to_kernel(False, kernel_type, keops)
 
     kernel = CustomAdditiveKernel(groups, d, kernel, weighted=weighted, ski=ski, ski_options=ski_options, X=X, **kwargs)
     kernel.initialize(init_mixin_range, init_lengthscale_range)
@@ -247,15 +244,8 @@ def create_duvenaud_additive_kernel(d, max_degree):
 
 
 def create_multi_additive_kernel(d, max_degree, weighted=False, kernel_type='RBF', init_lengthscale_range=(1.0, 1.0),
-                                 init_mixin_range=(1.0, 1.0), ski=False, ski_options=False, X=None):
-    if kernel_type == 'RBF':
-        kernel = gpytorch.kernels.RBFKernel
-        kwargs = dict()
-    elif kernel_type == 'Matern':
-        kernel = gpytorch.kernels.MaternKernel
-        kwargs = dict(nu=3/2)
-    else:
-        raise ValueError("Unknown kernel type")
+                                 init_mixin_range=(1.0, 1.0), ski=False, ski_options=False, X=None, keops=False):
+    kernel, kwargs = _map_to_kernel(False, kernel_type, keops)
 
     max_degree = min(max_degree, d)
     groups = []
@@ -267,35 +257,29 @@ def create_multi_additive_kernel(d, max_degree, weighted=False, kernel_type='RBF
     return kernel
 
 
-def create_multi_full_kernel(d, J, ard=False, ski=False, grid_size=None, kernel_type='RBF', init_lengthscale_range=(1.0, 1.0),
-                             init_mixin_range=(1.0, 1.0)):
+def create_multi_full_kernel(d, J, init_mixin_range=(1.0, 1.0), **kwargs):
+    """Helper to create a sum of full kernels with the options in **kwargs."""
     outputscales = _sample_from_range(J, init_mixin_range)
     total = sum(outputscales)
     outputscales = [o / total for o in outputscales]
 
     subkernels = []
     for j in range(0,J):
-        new_kernel = ScaleKernel(create_full_kernel(d, ard=ard, ski=ski, grid_size=grid_size, kernel_type=kernel_type,
-                                                    init_lengthscale_range=init_lengthscale_range))
+        new_kernel = ScaleKernel(create_full_kernel(d, **kwargs))
         new_kernel.initialize(outputscale=outputscales[j])
         subkernels.append(new_kernel)
     return gpytorch.kernels.AdditiveKernel(*subkernels)
 
 
-def create_full_kernel(d, ard=False, ski=False, grid_size=None, kernel_type='RBF', init_lengthscale_range=(1.0, 1.0)):
+def create_full_kernel(d, ard=False, ski=False, grid_size=None, kernel_type='RBF', init_lengthscale_range=(1.0, 1.0),
+                       keops=False):
     """Helper to create an RBF kernel object with these options."""
     if ard:
         ard_num_dims = d
     else:
         ard_num_dims = None
-    if kernel_type == 'RBF':
-        kernel = gpytorch.kernels.RBFKernel(ard_num_dims=ard_num_dims)
-    elif kernel_type == 'Matern':
-        kernel = gpytorch.kernels.MaternKernel(nu=1.5, ard_num_dims=ard_num_dims)
-    elif kernel_type == 'InverseMQ':
-        kernel = InverseMQKernel(ard_num_dims=ard_num_dims)
-    else:
-        raise ValueError("Unknown kernel type")
+
+    kernel = _map_to_kernel(True, kernel_type, keops, ard_num_dims=ard_num_dims)
 
     if ard:
         samples = ard_num_dims
@@ -304,8 +288,7 @@ def create_full_kernel(d, ard=False, ski=False, grid_size=None, kernel_type='RBF
     kernel.initialize(lengthscale=_sample_from_range(samples, init_lengthscale_range))
 
     if ski:
-        kernel = GridInterpolationKernel(kernel, num_dims=d,
-                                         grid_size=grid_size)
+        kernel = GridInterpolationKernel(kernel, num_dims=d, grid_size=grid_size)
     return kernel
 
 
