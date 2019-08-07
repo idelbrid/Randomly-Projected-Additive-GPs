@@ -3,7 +3,8 @@ from gpytorch import lazify
 from gpytorch.models import ExactGP, AbstractVariationalGP
 from gpytorch.variational import CholeskyVariationalDistribution, VariationalStrategy
 import torch
-from gp_models.kernels import CustomAdditiveKernel, GeneralizedProjectionKernel
+from gp_models.kernels import GeneralizedProjectionKernel
+from gp_models import CustomAdditiveKernel
 
 
 class ExactGPModel(ExactGP):

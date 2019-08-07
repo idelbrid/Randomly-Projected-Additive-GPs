@@ -3,7 +3,6 @@ import rp
 from gp_models.models import ExactGPModel
 from gp_models.kernels.etc import DNN
 from gp_models.kernels import PolynomialProjectionKernel, GeneralizedProjectionKernel, GeneralizedPolynomialProjectionKernel
-from gp_models.kernels import StrictlyAdditiveKernel, CustomAdditiveKernel
 from gp_models.kernels import ScaledProjectionKernel, InverseMQKernel, MemoryEfficientGamKernel
 from gpytorch.kernels import ScaleKernel, RBFKernel, GridInterpolationKernel, MaternKernel, InducingPointKernel
 from gpytorch.kernels import MultiDeviceKernel
@@ -11,7 +10,7 @@ from gpytorch.kernels import NewtonGirardAdditiveKernel
 import gpytorch
 
 from gpytorch.mlls import VariationalELBO, VariationalMarginalLogLikelihood
-from gp_models import SVGPRegressionModel
+from gp_models import SVGPRegressionModel, CustomAdditiveKernel, StrictlyAdditiveKernel
 import torch
 import warnings
 import copy

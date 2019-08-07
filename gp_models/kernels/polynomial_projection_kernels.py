@@ -1,10 +1,10 @@
 import copy
 
 import gpytorch
-from torch import nn as nn, __init__
+import torch
+from torch import nn, __init__
 
 import rp
-from gp_models.kernels.additive_kernels import CustomAdditiveKernel
 from gp_models.kernels.etc import _sample_from_range
 
 
@@ -17,6 +17,19 @@ class Identity(nn.Module):
 
 
 class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
+    """The complicated base-kernel for polynomial-projection kernels....
+
+    Implements k(x) = k1(p1(x))*k1(p2(x))*...*k1(pj(x)) + ... + k1(pn1(x))*...*k1(pnd(x))
+     * We have a single base kernel class base_kernel
+     * We have an arbitrary projection module (which may be the identity transformation)
+     * In order of the dimensions, the projections are grouped into multiplicative groups by the component_degrees
+         key word, e.g. component_degrees=[2, 3] would group projection 1 and 2 together and 3, 4, and 5 together.
+     * Each additive component in the covariance decomposition optionally has its own scale, indicated by `weighted`
+     * the ski keyword allows each kernel to be approximated by SKI automagically
+     * X is used to deterimine the bounds of the projections that SKI will use for its grid.
+
+    Note: This kernel is implemented using AdditiveKernel and ProductKernel, which are _not_ memory efficient.
+    """
     def __init__(self, component_degrees, d, base_kernel, projection_module,
                  learn_proj=False, weighted=False, ski=False, ski_options=None, X=None, lengthscale_prior=None,
                  outputscale_prior=None, **kernel_kwargs):
@@ -70,7 +83,6 @@ class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
                                                                        grid_bounds=bds, **ski_options)
                 product_kernels.append(bkernel)
                 dim_count += 1
-            # TODO: re-implement this change when GPyTorch bugfix comes
             if len(product_kernels) == 1:
                 product_kernel = product_kernels[0]
                 scale_kernel_active_dims = product_kernel.active_dims
@@ -126,6 +138,7 @@ class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
             return self.kernel(x1_projections, x2_projections, **params)
 
     def initialize(self, mixin_range, lengthscale_range):
+        """Initialize weights/sales and length scales of sub-kernels."""
         mixins = _sample_from_range(len(self.component_degrees), mixin_range)
         mixins = mixins / mixins.sum()
         mixins.requires_grad = False
@@ -143,14 +156,6 @@ class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
                 else:
                     kk.base_kernel.lengthscale = ls
 
-    # def eval(self):
-    #     if self.ski:
-    #         for i, k in enumerate(self.kernel.kernels):
-    #             for j, kk in enumerate(k.base_kernel.kernels):
-    #                 kk.grid_is_dynamic = True
-    #                 print('Setting dynamic true')
-    #     return super(GeneralizedProjectionKernel, self).eval()
-
     def train(self, mode=True):
         if self.ski:
             for i, k in enumerate(self.kernel.kernels):
@@ -164,6 +169,7 @@ class GeneralizedProjectionKernel(gpytorch.kernels.Kernel):
         return super(GeneralizedProjectionKernel, self).train(mode=mode)
 
     def to_additive_kernel(self):
+        """Helper function to make an CustomAdditiveKernel from this class."""
         ct = 0
         groups = []
         for d in self.component_degrees:
@@ -235,3 +241,43 @@ class RPPolyKernel(PolynomialProjectionKernel):
         super(RPPolyKernel, self).__init__(J, k, d, base_kernel, projs, bs, activation=activation,
                                            learn_proj=learn_proj, weighted=weighted, ski=ski, ski_options=ski_options,
                                            X=X, **kernel_kwargs)
+
+
+class CustomAdditiveKernel(GeneralizedProjectionKernel):
+    """For convenience"""
+    def __init__(self, groups, d, base_kernel, weighted=False, ski=False, ski_options=None, X=None, **kernel_kwargs):
+        class GroupFeaturesModule(nn.Module):
+            def __init__(self, groups):
+                super(GroupFeaturesModule, self).__init__()
+                order = []
+                for g in groups:
+                    order.extend(g)
+                order = torch.tensor(order)
+                self.register_buffer('order', order)
+
+            def forward(self, x):
+                return torch.index_select(x, -1, self.order)
+
+            @property
+            def weight(self):
+                M = torch.zeros(d, d)
+                for i, g in enumerate(self.order):
+                    M[i, g] = 1
+                return M
+
+        projection_module = GroupFeaturesModule(groups)
+        degrees = [len(g) for g in groups]
+        super(CustomAdditiveKernel, self).__init__(degrees, d, base_kernel, projection_module,
+                                                   weighted=weighted, ski=ski, ski_options=ski_options,
+                                                   X=X, **kernel_kwargs)
+        self.groups = groups
+
+
+class StrictlyAdditiveKernel(CustomAdditiveKernel):
+    """For convenience"""
+    def __init__(self, d, base_kernel, weighted=False, ski=False, ski_options=None, X=None, **kernel_kwargs):
+        # projection_module = Identity()
+        groups = [[i] for i in range(d)]
+        super(StrictlyAdditiveKernel, self).__init__(groups, d, base_kernel, learn_proj=False,
+                                             weighted=weighted, ski=ski, ski_options=ski_options,
+                                             X=X, **kernel_kwargs)
