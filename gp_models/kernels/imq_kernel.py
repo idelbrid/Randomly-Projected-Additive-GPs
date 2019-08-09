@@ -24,6 +24,9 @@ class InverseMQKernel(gpytorch.kernels.Kernel):
 class KeOpsInverseMQKernel(KeOpsKernel):
     """Basically copied from gpytorch:
     https://github.com/cornellius-gp/gpytorch/blob/master/gpytorch/kernels/keops/rbf_kernel.py"""
+    def __init__(self, **kwargs):
+        super().__init__(has_lengthscale=True, **kwargs)
+
     def covar_func(self, x1, x2, diag=False):
         # TODO: x1 / x2 size checks are a work around for a very minor bug in KeOps.
         # This bug is fixed on KeOps master, and we'll remove that part of the check
@@ -39,7 +42,7 @@ class KeOpsInverseMQKernel(KeOpsKernel):
                 x1_ = KEOLazyTensor(x1[..., :, None, :])
                 x2_ = KEOLazyTensor(x2[..., None, :, :])
 
-                K = ((x1_ - x2_) ** 2).sum(-1).add_(1).pow_(-1/2)
+                K = (((x1_ - x2_) ** 2).sum(-1)+1) ** (-1/2)
 
                 return K
 
