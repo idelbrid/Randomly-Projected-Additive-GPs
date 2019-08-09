@@ -3,7 +3,7 @@ import rp
 from gp_models.models import ExactGPModel
 from gp_models.kernels.etc import DNN
 from gp_models.kernels import PolynomialProjectionKernel, GeneralizedProjectionKernel, GeneralizedPolynomialProjectionKernel
-from gp_models.kernels import ScaledProjectionKernel, InverseMQKernel, MemoryEfficientGamKernel
+from gp_models.kernels import ScaledProjectionKernel, InverseMQKernel, MemoryEfficientGamKernel, KeOpsInverseMQKernel
 from gpytorch.kernels import ScaleKernel, RBFKernel, GridInterpolationKernel, MaternKernel, InducingPointKernel
 from gpytorch.kernels import MultiDeviceKernel
 from gpytorch.kernels import NewtonGirardAdditiveKernel
@@ -71,9 +71,10 @@ def _map_to_kernel(return_object, kernel_type, keops, **key_words):
         elif kernel_type == 'InverseMQ':
             if not keops:
                 cls = InverseMQKernel
-                kwargs = dict(*key_words)
+                kwargs = dict(**key_words)
             else:
-                raise ValueError("IMQ not implemented yet with KeOps")
+                cls = KeOpsInverseMQKernel
+                kwargs = dict(**key_words)
         elif kernel_type == 'Cosine':
             if not keops:
                 cls = gpytorch.kernels.CosineKernel
