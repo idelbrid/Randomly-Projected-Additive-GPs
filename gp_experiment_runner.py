@@ -323,6 +323,7 @@ if __name__ == '__main__':
     parser.add_argument('--skip_log_det_forward', action='store_true', required=False, help='Apply skip log det forward option.')
     parser.add_argument('--checkpoint_kernel', type=int, default=0, required=False, help='Split kernel into chunks')
     parser.add_argument('--record_pred_unc', action='store_true', required=False, help='Record predictive uncertainty metrics.')
+    parser.add_argument('--double', action='store_true', required=False, help='Run experiments in double precision rather than float.')
 
     args = parser.parse_args()
 
@@ -383,6 +384,9 @@ if __name__ == '__main__':
     options['skip_posterior_variances'] = args.skip_posterior_variances
     options['evaluate_on_train'] = not args.skip_evaluate_on_train
     options['record_pred_unc'] = args.record_pred_unc
+    if args.double:
+        options['double'] = args.double
+        # Otherwise, leave it out for backwards compatability.
 
     if options['record_pred_unc'] and options['skip_posterior_variances']:
         raise ValueError("Can't record predictive uncertainty while skipping posterior variances.")
