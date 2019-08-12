@@ -3,7 +3,7 @@ from typing import Optional, Type
 import numpy as np
 import torch
 from torch.utils.data import TensorDataset, DataLoader
-from gp_models.kernels import ProjectionKernel
+from gp_models.kernels import ScaledProjectionKernel
 from gp_models.models import ExactGPModel
 from gpytorch.likelihoods import GaussianLikelihood
 from gpytorch.mlls import ExactMarginalLogLikelihood
@@ -128,7 +128,7 @@ def learn_projections(base_kernels, xs, ys, max_projections=10,
                 base_kernel = base_kernels[i]
                 projection = torch.nn.Linear(d, 1, bias=False).to(xs)
                 projection.weight.data = coef
-                kernel = ProjectionKernel(projection, base_kernel)
+                kernel = ScaledProjectionKernel(projection, base_kernel)
                 model = ExactGPModel(xs, residuals,
                                      GaussianLikelihood(), kernel).to(xs)
             else:

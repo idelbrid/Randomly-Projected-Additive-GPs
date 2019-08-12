@@ -3,7 +3,8 @@ from gpytorch import lazify
 from gpytorch.models import ExactGP, AbstractVariationalGP
 from gpytorch.variational import CholeskyVariationalDistribution, VariationalStrategy
 import torch
-from gp_models.kernels import AdditiveKernel, GeneralizedProjectionKernel
+from gp_models.kernels import GeneralizedProjectionKernel
+from gp_models import CustomAdditiveKernel
 
 
 class ExactGPModel(ExactGP):
@@ -22,10 +23,10 @@ class ExactGPModel(ExactGP):
 class AdditiveExactGPModel(ExactGPModel):
     def __init__(self, train_x, train_y, likelihood, kernel):
         if isinstance(kernel, gpytorch.kernels.ScaleKernel):
-            if not isinstance(kernel.base_kernel, AdditiveKernel):
+            if not isinstance(kernel.base_kernel, CustomAdditiveKernel):
                 raise ValueError("Not an additive kernel.")
         else:
-            if not isinstance(kernel, AdditiveKernel):
+            if not isinstance(kernel, CustomAdditiveKernel):
                 raise ValueError("Not an additive kernel.")
         super(AdditiveExactGPModel, self).__init__(train_x, train_y, likelihood, kernel)
 
@@ -34,7 +35,7 @@ class AdditiveExactGPModel(ExactGPModel):
         if isinstance(self.covar_module, gpytorch.kernels.ScaleKernel):
             scale = self.covar_module.outputscale
             add_kernel = self.covar_module.base_kernel
-        elif isinstance(self.covar_module,  AdditiveKernel):
+        elif isinstance(self.covar_module,  CustomAdditiveKernel):
             scale = torch.tensor(1.0, dtype=torch.float)
             add_kernel = self.covar_module
         else:
