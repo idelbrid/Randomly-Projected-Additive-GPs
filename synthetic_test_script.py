@@ -15,7 +15,7 @@ import json
 import gpytorch.settings as gp_set
 from gp_experiment_runner import run_experiment
 
-device = 'cuda:0'
+device = 'cuda:7'
 
 
 ########## FUNCTIONS ####################
@@ -60,6 +60,11 @@ def nonseparable(x):
     return x.prod(dim=-1)
 
 
+def additive(x):
+    n, d = x.shape
+    return torch.sin(x).sum(dim=-1)
+
+
 def non_additive(x):
     n, d = x.shape
     # Continuous XOR by mixture of Gaussians
@@ -70,7 +75,7 @@ def non_additive(x):
     return y
 
 
-def benchmark_on_n_pts(n_pts, create_model_func, target_func, ho_x, ho_y, fit=True, repeats=3, max_iter=1000, return_model=False, verbose=0, checkpoint=True, print_freq=1, **kwargs):
+def benchmark_on_n_pts(n_pts, create_model_func, target_func, ho_x, ho_y, fit=True, repeats=3, max_iter=1000, return_model=False, verbose=0, checkpoint=True, print_freq=1, use_chol=False, **kwargs):
     dims = ho_x.shape[1]
 #     if n_pts > 20:
 #         ho_x = ho_x.to(device)
@@ -113,7 +118,8 @@ def benchmark_on_n_pts(n_pts, create_model_func, target_func, ho_x, ho_y, fit=Tr
             model = model.to(device)
             data = data.to(device)
             y = y.to(device)
-        with gp_set.fast_computations(True, True, True), gp_set.max_cg_iterations(10_000):
+        fast = not use_chol
+        with gp_set.fast_computations(fast, fast, fast), gp_set.max_cg_iterations(10_000):
             with gp_set.cg_tolerance(0.001), gp_set.eval_cg_tolerance(0.0005), gp_set.memory_efficient(True):
                 if fit:
                     mll = ExactMarginalLogLikelihood(model.likelihood, model)
@@ -140,7 +146,7 @@ def benchmark_on_n_pts(n_pts, create_model_func, target_func, ho_x, ho_y, fit=Tr
     return rep_mses, models, mlls
 
 
-def benchmark_algo_on_func(create_model_func, target_func, dims=6, max_pts=2560, fit=True, repeats=3, start_after=0, **kwargs):
+def benchmark_algo_on_func(create_model_func, target_func, dims=6, max_pts=2560, fit=True, repeats=3, start_after=0, use_chol=False, **kwargs):
     identifier = np.random.randint(0, 1e9)
     file = './progress_log_{:09d}.json'.format(identifier)
     print(file)
@@ -153,7 +159,7 @@ def benchmark_algo_on_func(create_model_func, target_func, dims=6, max_pts=2560,
         if n_pts > max_pts:
             break
         print('n_pts={}'.format(n_pts))
-        rep_mses, _, _ = benchmark_on_n_pts(n_pts, create_model_func, target_func, ho_x, ho_y, fit=fit, repeats=repeats, **kwargs)
+        rep_mses, _, _ = benchmark_on_n_pts(n_pts, create_model_func, target_func, ho_x, ho_y, fit=fit, repeats=repeats, use_chol=use_chol, **kwargs)
         rmses.append(np.mean(np.sqrt(rep_mses)))
         json.dump(rmses, open(file, 'w'))
     return rmses
@@ -202,16 +208,24 @@ def create_gam_model(data, y):
 
 ############# Configs #################
 
-dims = 2
-max_pts = 20_000
-repeats = 30
-func = non_additive
-output_fname = 'test_synth_experiment_2d.json'
+dims = 6
+min_pts = 600 
+max_pts = 12000  # only partial
+repeats = 15
+func = additive
+output_fname = 'test_synth_experiment_6d_additive_gam_partial_chol.json'
+use_chol = True
 
-rbf_rmses = benchmark_algo_on_func(create_bl_model, func, dims=dims, max_pts=max_pts, repeats=repeats)
-gam_rmses = benchmark_algo_on_func(create_gam_model, func, dims=dims, max_pts=max_pts, repeats=repeats)
-dpa_rmses = benchmark_algo_on_func(create_rp_model, func, dims=dims, max_pts=max_pts, repeats=repeats)
-dpa_ard_rmses = benchmark_algo_on_func(create_dpa_gp_ard_model, func, dims=dims, max_pts=max_pts, repeats=repeats, J=dims)
+rbf_rmses = benchmark_algo_on_func(create_bl_model, func, dims=dims, start_after=min_pts, max_pts=max_pts, repeats=repeats, use_chol=use_chol)
+gam_rmses = benchmark_algo_on_func(create_gam_model, func, dims=dims, start_after=min_pts, max_pts=max_pts, repeats=repeats, use_chol=use_chol)
+# dpa_rmses = benchmark_algo_on_func(create_rp_model, func, dims=dims, max_pts=max_pts, repeats=repeats)
+# dpa_ard_rmses = benchmark_algo_on_func(create_dpa_gp_ard_model, func, dims=dims, max_pts=max_pts, repeats=repeats, J=dims)
 
-json.dump({'rbf': rbf_rmses, 'gam': gam_rmses, 'dpa': dpa_rmses, 'dpa_ard': dpa_ard_rmses}, open('./run_outputs/{}'.format(output_fname), 'w'))
+json.dump({
+    'rbf': rbf_rmses, 
+    'gam': gam_rmses, 
+    # 'dpa': dpa_rmses, 
+    # 'dpa_ard': dpa_ard_rmses
+    }, 
+    open('./run_outputs/{}'.format(output_fname), 'w'))
 
