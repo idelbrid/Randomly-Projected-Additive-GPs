@@ -468,7 +468,7 @@ def train_ppr_gp(trainX, trainY, testX, testY, model_kwargs, train_kwargs, devic
 # TODO: change the key word arguments to model options and rename train_kwargs to train options. This applies to basically all of the functions here.
 def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwargs, devices=('cpu',),
                    skip_posterior_variances=False, skip_random_restart=False, evaluate_on_train=True,
-                   output_device=None, record_pred_unc=False):
+                   output_device=None, record_pred_unc=False, double=False):
     """Create and train an exact GP with the given options"""
     model_kwargs = copy.copy(model_kwargs)
     train_kwargs = copy.copy(train_kwargs)
@@ -478,10 +478,12 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
         output_device = devices[0]
     else:
         output_device = torch.device(output_device)
-    trainX = trainX.to(output_device)
-    trainY = trainY.to(output_device)
-    testX = testX.to(output_device)
-    testY = testY.to(output_device)
+    type_ = torch.double if double else torch.float
+
+    trainX = trainX.to(output_device, type_)
+    trainY = trainY.to(output_device, type_)
+    testX = testX.to(output_device, type_)
+    testY = testY.to(output_device, type_)
 
     # replace with value from dataset for convenience
     for k, v in list(model_kwargs.items()):
@@ -492,10 +494,11 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
     random_restarts = train_kwargs.pop('random_restarts', 1)
     init_iters = train_kwargs.pop('init_iters', 20)
     optimizer_ = _map_to_optim(train_kwargs.pop('optimizer'))
+    rr_check_conv = train_kwargs.pop('rr_check_conv', False)
 
     initial_train_kwargs = copy.copy(train_kwargs)
     initial_train_kwargs['max_iter'] = init_iters
-    initial_train_kwargs['check_conv'] = False
+    initial_train_kwargs['check_conv'] = rr_check_conv
     # initial_train_kwargs['verbose'] = 0  # don't shout about it
     best_model, best_likelihood, best_mll = None, None, None
     best_loss = np.inf
@@ -506,7 +509,7 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
         for restart in range(random_restarts):
             # TODO: log somehow what's happening in the restarts.
             model, likelihood = create_exact_gp(trainX, trainY, kind, devices=devices, **model_kwargs)
-            model = model.to(output_device)
+            model = model.to(output_device, type_)
 
             # regular marginal log likelihood
             mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
@@ -525,7 +528,7 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
         mll = best_mll
     else:
         model, likelihood = create_exact_gp(trainX, trainY, kind, devices=devices, **model_kwargs)
-        model = model.to(output_device)
+        model = model.to(output_device, type_)
         mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
 
     # fit GP
@@ -578,7 +581,9 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
     model_metrics['training_warnings'] = len(w)
     model_metrics['testing_warning'] = '' if len(w2) == 0 else w2[-1].message
     model_metrics['state_dict_file'] = _save_state_dict(model)
-    return model_metrics, pred_mean.to('cpu'), model
+
+    return model_metrics, pred_mean.to('cpu', torch.float), model
+
 
 
 def train_compressed_gp(trainX, trainY, testX, testY, model_kwargs, train_kwargs, devices=('cpu',),
