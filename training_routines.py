@@ -529,8 +529,10 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
         mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
 
     # fit GP
-    trained_epochs = train_to_convergence(model, trainX, trainY, optimizer=optimizer_,
-                         objective=mll, isloss=False, **train_kwargs)
+    with warnings.catch_warnings(record=True) as w:
+        trained_epochs = train_to_convergence(model, trainX, trainY, optimizer=optimizer_,
+                                              objective=mll, isloss=False, **train_kwargs)
+
     model.eval()
     likelihood.eval()
     mll.eval()
@@ -550,7 +552,12 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
                 train_outputs = model(trainX)
                 model_metrics['train_mse'] = mean_squared_error(train_outputs.mean, trainY)
 
-            test_outputs = model(testX)
+
+            with warnings.catch_warnings(record=True) as w2:
+                test_outputs = model(testX)
+                pred_mean = test_outputs.mean
+
+
             if not skip_posterior_variances:
                 # model_metrics['train_nll'] = -likelihood(train_outputs).log_prob(
                 #     trainY).item()
@@ -568,8 +575,10 @@ def train_exact_gp(trainX, trainY, testX, testY, kind, model_kwargs, train_kwarg
                     # model_metrics['test_pred_var'] = distro.variance.tolist()
                     # model_metrics['test_pred_mean'] = distro.mean.tolist()
 
+    model_metrics['training_warnings'] = len(w)
+    model_metrics['testing_warning'] = '' if len(w2) == 0 else w2[-1].message
     model_metrics['state_dict_file'] = _save_state_dict(model)
-    return model_metrics, test_outputs.mean.to('cpu'), model
+    return model_metrics, pred_mean.to('cpu'), model
 
 
 def train_compressed_gp(trainX, trainY, testX, testY, model_kwargs, train_kwargs, devices=('cpu',),
