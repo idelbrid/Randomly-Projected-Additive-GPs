@@ -1,13 +1,13 @@
 # Randomly Projected Additive GPs git repo
 
-This repo contains implementations and experiment code for the paper <br>\<TODO: ADD PAPER NAME\></br>. 
+This repo contains implementations and experiment code for the paper <b>\<TODO: ADD PAPER NAME\></b>. 
 
 ## Files
 
-* `rp.py`: Generating (random) projection matrices, including a routine for generating diversified projection matrices (useed in DPA-GP).
 * `config_template.py`: Template configuration file for dataset file locations, etc. 
 * `gp_experiment_runner.py`: Command-line endpoint used for running batches of experiments. 
 * `synthetic_test_script.py`: A simple script for running synthetic experiments.
+* `rp.py`: Generating (random) projection matrices, including a routine for generating diversified projection matrices (useed in DPA-GP).
 * `test.py`: a suite of unit tests.
 * `utils.py`: Utilities that are reused and don't live in a particular section of the project.
 
