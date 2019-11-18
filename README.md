@@ -1,18 +1,21 @@
-# Scalable GPs git repo
+# Randomly Projected Additive GPs git repo
 
-This repo is a work-in-progress for running experiments related to scalable Gaussian Processes. It is planned to contain code to (1) preprocess many benchmark datasets, (2) implement and run (scalable) Gaussian Process models, primarily using GPyTorch, (3) easily, modularly, and systematically run batches of experiments, and (4) visualize results.
+This repo contains implementations and experiment code for the paper <br>\<TODO: ADD PAPER NAME\></br>. 
 
 ## Files
 
-* `rp.py`: code for generating random projection matrices (and some ELM code)
-* `gp_helpers.py`: module containing
-    * RP kernel implementation
-    * Routine for training to convergence
-    * GPyTorch model classes
-* `training_routines.py`: routines for running GP models with different configurations
-* `rp_experiments.py`: routines for handling datasets and running models on many datasets with or without cross-validation.
+* `rp.py`: Generating (random) projection matrices, including a routine for generating diversified projection matrices (useed in DPA-GP).
+* `config_template.py`: Template configuration file for dataset file locations, etc. 
+* `gp_experiment_runner.py`: Command-line endpoint used for running batches of experiments. 
+* `synthetic_test_script.py`: A simple script for running synthetic experiments.
+* `test.py`: a suite of unit tests.
+* `utils.py`: Utilities that are reused and don't live in a particular section of the project.
 
+## Subpackages
+* `gp_models`: Encapsulates the model (and kernel) definitions for kernels and models used.
+* `fitting`: Encapsulates methods for learning. Currently, only optimization-based methods are available, as opposed to, e.g., sampling.
 
-## Notebooks...
+## Folders
+* `model_specs`: Model specification .json files. These are used to store and re-use the configuration of models.
+* `run_scripts`: Re-used/example command-line calls to `gp_experiment_runner.py`.
 
-* Most are not permanent. Just fixtures to help run code and debug.
