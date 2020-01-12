@@ -15,7 +15,9 @@ from fitting.optimizing import mean_squared_error
 import training_routines
 
 def load_dataset(name: str):
-    """Helper method to load a given UCI dataset"""
+    """Helper method to load a given UCI dataset
+    Loads data from .mat files at path <data_base_path>/uci/<name>.mat
+    """
     mat = loadmat(os.path.join(data_base_path, 'uci', name, '{}.mat'.format(name)))
     [n, d] = mat['data'].shape
     df = pd.DataFrame(mat['data'],
