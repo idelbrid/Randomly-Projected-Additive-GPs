@@ -11,7 +11,8 @@ def postprocess_inverse_mq(dist):
 
 class InverseMQKernel(gpytorch.kernels.Kernel):
     def __init__(self, **kwargs):
-        super(InverseMQKernel, self).__init__(has_lengthscale=True, **kwargs)
+        self.has_lengthscale = True
+        super(InverseMQKernel, self).__init__(**kwargs)
         # self.register_parameter('gamma', torch.nn.Parameter(torch.as_tensor(gamma)))
 
     def forward(self, x1, x2, diag=False, last_dim_is_batch=False, **params):
@@ -25,6 +26,7 @@ class KeOpsInverseMQKernel(KeOpsKernel):
     """Basically copied from gpytorch:
     https://github.com/cornellius-gp/gpytorch/blob/master/gpytorch/kernels/keops/rbf_kernel.py"""
     def __init__(self, **kwargs):
+        self.has_lengthscale = True
         super().__init__(has_lengthscale=True, **kwargs)
 
     def covar_func(self, x1, x2, diag=False):

@@ -61,6 +61,7 @@ class GAMFunction(torch.autograd.Function):
 
 class MemoryEfficientGamKernel(gpytorch.kernels.Kernel):
     def __init__(self, **kwargs):
+        self.has_lengthscale = True
         super(MemoryEfficientGamKernel, self).__init__(has_lengthscale=True, **kwargs)
         self.covar_dist = GAMFunction()
 

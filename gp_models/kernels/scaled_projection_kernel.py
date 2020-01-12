@@ -4,7 +4,8 @@ import torch
 
 class ScaledProjectionKernel(gpytorch.kernels.Kernel):
     def __init__(self, projection_module, base_kernel, prescale=False, ard_d=None, learn_proj=False, **kwargs):
-        super(ScaledProjectionKernel, self).__init__(has_lengthscale=True, ard_d=ard_d, **kwargs)
+        self.has_lengthscale = True
+        super(ScaledProjectionKernel, self).__init__(ard_d=ard_d, **kwargs)
         self.projection_module = projection_module
         self.learn_proj = learn_proj
         if not self.learn_proj:
