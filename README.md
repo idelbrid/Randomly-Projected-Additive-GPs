@@ -1,10 +1,10 @@
 # Randomly Projected Additive GPs git repo
 
-This repo contains implementations and experiment code for the paper <b>\<TODO: ADD PAPER NAME\></b>. 
+This repo contains implementations and experiment code for the paper [Randomly Projected Additive Gaussian Processes for Regression](https://arxiv.org/abs/1912.12834)
 
 ## Files
 
-* `config_template.py`: Template configuration file for dataset file locations, etc. 
+* `config_template.py`: Template configuration file for dataset file locations, etc. **rename to `config.py` and replace with your file configurations**.
 * `gp_experiment_runner.py`: Command-line endpoint used for running batches of experiments. 
 * `synthetic_test_script.py`: A simple script for running synthetic experiments.
 * `rp.py`: Generating (random) projection matrices, including a routine for generating diversified projection matrices (useed in DPA-GP).
@@ -20,3 +20,5 @@ This repo contains implementations and experiment code for the paper <b>\<TODO: 
 * `model_specs`: Model specification .json files. These are used to store and re-use the configuration of models.
 * `run_scripts`: Re-used/example command-line calls to `gp_experiment_runner.py`.
 
+## UCI Data Sets
+To download the UCI data sets used for benchmarks, download them from [Andrew Gordon Wilson's home page](https://people.orie.cornell.edu/andrew/pattern/#Data). See `config_template.py` for details on how these files are expected to be organized in accordance with your configurations.
