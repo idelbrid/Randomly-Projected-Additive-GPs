@@ -14,13 +14,8 @@ from config import data_base_path
 from fitting.optimizing import mean_squared_error
 import training_routines
 
-
-def old_load_dataset(name: str):
-    """Helper method to load a given dataset by name"""
-    return pd.read_csv('./datasets/{}/dataset.csv'.format(name))
-
-
 def load_dataset(name: str):
+    """Helper method to load a given UCI dataset"""
     mat = loadmat(os.path.join(data_base_path, 'uci', name, '{}.mat'.format(name)))
     [n, d] = mat['data'].shape
     df = pd.DataFrame(mat['data'],
@@ -31,7 +26,6 @@ def load_dataset(name: str):
     df['target'] = df['target'] - df['target'].mean()
     df['target'] = df['target']/(df['target'].std())
 
-    # TODO: Figure out why this happens sometimes.
     df = df.dropna(axis=1, how='all')
 
     return df
@@ -221,76 +215,6 @@ def run_experiment(training_routine: Callable,
     results = pd.DataFrame(results_list)
     print('Mean RMSE = {}'.format(results['rmse'].mean()))
     return results
-
-
-# def run_experiment_suite(datasets,
-#                          training_routine: Callable,
-#                          training_options: Dict,
-#                          split: float,
-#                          cv: bool,
-#                          addl_metrics: Dict={},
-#                          inner_repeats=1,
-#                          outer_repeats=1,
-#                                             ):
-#     df = pd.DataFrame()
-#     if datasets == 'small':
-#         datasets = get_small_datasets()
-#     elif datasets == 'medium':
-#         datasets = get_medium_datasets()
-#     elif datasets == 'big':
-#         datasets = get_big_datasets()
-#     elif datasets == 'smalltomedium':
-#         datasets = get_small_datasets() + get_medium_datasets()
-#     elif datasets == 'all':
-#         datasets = get_datasets()
-#     else:
-#         raise ValueError("Unknown set of datasets")
-#
-#     for i in range(outer_repeats):
-#         for dataset in datasets:
-#             print(dataset, 'starting...')
-#             result = run_experiment(training_routine, training_options, dataset=dataset,
-#                            split=split, cv=cv, addl_metrics=addl_metrics,
-#                            repeats=inner_repeats)
-#             result['dataset'] = dataset
-#             df = pd.concat([df, result])
-#             df.to_csv('./_partial_result.csv')
-#
-#     return df
-
-
-# def rp_compare_ablation(filename, datasets, rp_options, repeats=1, max_j=300):
-#     if os.path.exists(filename):
-#         df = pd.read_csv(filename)
-#     else:
-#         df = pd.DataFrame({'dataset': [], 'J': []})
-#
-#     for dataset in datasets:
-#         print(dataset, 'starting')
-#         J_2 = 0
-#         J_1 = 1
-#         J = J_1 + J_2
-#         while J_1 + J_2 < max_j:
-#             J = J_1 + J_2
-#             J_2 = J_1
-#             J_1 = J
-#             print("J=", J)
-#             if not df[(df['J'] == J) & (df['dataset'] == dataset)].empty:
-#                 print("already done, skipping...")
-#                 continue
-#             rp_options['model_kwargs']['J'] = J
-#             options_json = json.dumps(rp_options)
-#             with gpytorch.settings.cg_tolerance(0.01):
-#                 result = run_experiment(training_routines.train_exact_gp, rp_options,
-#                         dataset=dataset, split=0.1, cv=True,
-#                         repeats=repeats, normalize_using_train=True)
-#             result['RP'] = True
-#             result['k'] = rp_options['model_kwargs']['k']
-#             result['J'] = rp_options['model_kwargs']['J']
-#             result['dataset'] = dataset
-#             result['options'] = options_json
-#             df = pd.concat([df, result])
-#             df.to_csv(filename)
 
 
 if __name__ == '__main__':
