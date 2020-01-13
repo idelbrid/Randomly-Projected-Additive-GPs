@@ -2,9 +2,15 @@
 
 This repo contains implementations and experiment code for the paper [Randomly Projected Additive Gaussian Processes for Regression](https://arxiv.org/abs/1912.12834)
 
+# Requirements
+- Python > 3.0
+- GPyTorch >= 1.0
+- PyKeOps >= 1.2
+
+
 ## Files
 
-* `config_template.py`: Template configuration file for dataset file locations, etc. **Rename to `config.py` and replace with your file configurations**.
+* `config_template.py`: Template configuration file for dataset file locations, etc. **Rename to `config.py` and replace with your file configurations**.  UCI datasets referenced in the experiments may be [downloaded here](https://drive.google.com/file/d/0BxWe_IuTnMFcYXhxdUNwRHBKTlU/view).
 * `gp_experiment_runner.py`: Command-line endpoint used for running batches of experiments. 
 * `synthetic_test_script.py`: A simple script for running synthetic experiments.
 * `rp.py`: Generating (random) projection matrices, including a routine for generating diversified projection matrices (useed in DPA-GP).
